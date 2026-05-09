@@ -1,0 +1,5569 @@
+Enterprise Workflow Management Platform
+I'll build a comprehensive enterprise workflow management system. Given the scope, I'll structure this into logical sections covering architecture, database, and implementation.
+
+Project Architecture Overview
+
+
+enterprise-workflow/
+├── public/
+├── src/
+│   ├── api/                    # API layer abstractions
+│   ├── components/             # Reusable UI components
+│   │   ├── ui/                 # Shadcn UI components
+│   │   ├── layout/             # Layout components
+│   │   ├── forms/              # Form components
+│   │   ├── tasks/              # Task-specific components
+│   │   ├── teams/              # Team components
+│   │   ├── notifications/      # Notification components
+│   │   └── common/             # Shared components
+│   ├── features/               # Feature modules
+│   │   ├── auth/
+│   │   ├── dashboard/
+│   │   ├── tasks/
+│   │   ├── teams/
+│   │   ├── users/
+│   │   ├── reports/
+│   │   ├── notifications/
+│   │   └── settings/
+│   ├── hooks/                  # Custom React hooks
+│   ├── lib/                    # Utility libraries
+│   ├── pages/                  # Page components
+│   ├── routes/                 # Routing configuration
+│   ├── services/               # Business logic services
+│   ├── store/                  # Zustand stores
+│   ├── types/                  # TypeScript types
+│   ├── utils/                  # Utility functions
+│   └── integrations/
+│       └── supabase/           # Supabase client & helpers
+├── supabase/
+│   ├── migrations/             # SQL migrations
+│   └── functions/              # Edge functions
+├── .env.example
+├── package.json
+├── tailwind.config.js
+├── tsconfig.json
+└── vite.config.ts
+Part 1: Supabase Database Schema
+sql
+
+
+-- ============================================
+-- ENTERPRISE WORKFLOW MANAGEMENT SYSTEM
+-- Complete Supabase SQL Schema
+-- ============================================
+-- Enable required extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+-- ============================================
+-- ENUMS
+-- ============================================
+CREATE TYPE user_role AS ENUM (
+  'super_admin',
+  'admin',
+  'team_manager',
+  'employee',
+  'viewer'
+);
+CREATE TYPE task_status AS ENUM (
+  'draft',
+  'pending',
+  'assigned',
+  'in_progress',
+  'blocked',
+  'waiting_review',
+  'completed',
+  'rejected',
+  'closed',
+  'archived'
+);
+CREATE TYPE task_priority AS ENUM (
+  'low',
+  'medium',
+  'high',
+  'critical',
+  'emergency'
+);
+CREATE TYPE approval_status AS ENUM (
+  'pending',
+  'approved',
+  'rejected'
+);
+CREATE TYPE notification_type AS ENUM (
+  'task_assigned',
+  'task_updated',
+  'task_completed',
+  'comment_added',
+  'mention',
+  'approval_requested',
+  'approval_approved',
+  'approval_rejected',
+  'due_date_approaching',
+  'sla_breached',
+  'team_added',
+  'file_uploaded'
+);
+CREATE TYPE email_status AS ENUM (
+  'queued',
+  'processing',
+  'sent',
+  'failed',
+  'bounced'
+);
+-- ============================================
+-- 1. PROFILES TABLE
+-- ============================================
+CREATE TABLE profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email TEXT UNIQUE NOT NULL,
+  full_name TEXT NOT NULL,
+  avatar_url TEXT,
+  role user_role DEFAULT 'employee' NOT NULL,
+  department_id UUID,
+  job_title TEXT,
+  phone TEXT,
+  timezone TEXT DEFAULT 'UTC',
+  is_active BOOLEAN DEFAULT true,
+  last_seen_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_profiles_email ON profiles(email);
+CREATE INDEX idx_profiles_role ON profiles(role);
+CREATE INDEX idx_profiles_department ON profiles(department_id);
+CREATE INDEX idx_profiles_active ON profiles(is_active);
+-- ============================================
+-- 2. DEPARTMENTS TABLE
+-- ============================================
+CREATE TABLE departments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL,
+  description TEXT,
+  head_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  parent_id UUID REFERENCES departments(id) ON DELETE SET NULL,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_departments_head ON departments(head_id);
+CREATE INDEX idx_departments_parent ON departments(parent_id);
+-- Add foreign key to profiles after departments exists
+ALTER TABLE profiles 
+ADD CONSTRAINT fk_profiles_department 
+FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL;
+-- ============================================
+-- 3. TEAMS TABLE
+-- ============================================
+CREATE TABLE teams (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL,
+  description TEXT,
+  department_id UUID REFERENCES departments(id) ON DELETE SET NULL,
+  manager_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  avatar_url TEXT,
+  color TEXT DEFAULT '#6366f1',
+  is_active BOOLEAN DEFAULT true,
+  created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_teams_department ON teams(department_id);
+CREATE INDEX idx_teams_manager ON teams(manager_id);
+CREATE INDEX idx_teams_active ON teams(is_active);
+-- ============================================
+-- 4. TEAM_MEMBERS TABLE
+-- ============================================
+CREATE TABLE team_members (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  role TEXT DEFAULT 'member',
+  joined_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  UNIQUE(team_id, user_id)
+);
+CREATE INDEX idx_team_members_team ON team_members(team_id);
+CREATE INDEX idx_team_members_user ON team_members(user_id);
+-- ============================================
+-- 5. TASK_LABELS TABLE
+-- ============================================
+CREATE TABLE task_labels (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL,
+  color TEXT NOT NULL DEFAULT '#6366f1',
+  description TEXT,
+  organization_id UUID,
+  created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_task_labels_name ON task_labels(name);
+-- ============================================
+-- 6. TASKS TABLE
+-- ============================================
+CREATE TABLE tasks (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  task_number SERIAL,
+  title TEXT NOT NULL,
+  description TEXT,
+  status task_status DEFAULT 'draft' NOT NULL,
+  priority task_priority DEFAULT 'medium' NOT NULL,
+  
+  -- Assignment
+  assignee_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  team_id UUID REFERENCES teams(id) ON DELETE SET NULL,
+  reporter_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  
+  -- Dates
+  due_date TIMESTAMPTZ,
+  start_date TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  
+  -- Progress
+  progress INTEGER DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
+  estimated_hours DECIMAL(10, 2),
+  actual_hours DECIMAL(10, 2),
+  
+  -- SLA
+  sla_deadline TIMESTAMPTZ,
+  sla_breached BOOLEAN DEFAULT false,
+  
+  -- Relations
+  parent_task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+  department_id UUID REFERENCES departments(id) ON DELETE SET NULL,
+  
+  -- Metadata
+  is_archived BOOLEAN DEFAULT false,
+  created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_tasks_status ON tasks(status);
+CREATE INDEX idx_tasks_priority ON tasks(priority);
+CREATE INDEX idx_tasks_assignee ON tasks(assignee_id);
+CREATE INDEX idx_tasks_team ON tasks(team_id);
+CREATE INDEX idx_tasks_reporter ON tasks(reporter_id);
+CREATE INDEX idx_tasks_due_date ON tasks(due_date);
+CREATE INDEX idx_tasks_created_at ON tasks(created_at DESC);
+CREATE INDEX idx_tasks_parent ON tasks(parent_task_id);
+CREATE INDEX idx_tasks_search ON tasks USING gin(to_tsvector('english', title || ' ' || COALESCE(description, '')));
+-- ============================================
+-- 7. TASK_LABEL_MAPPING TABLE
+-- ============================================
+CREATE TABLE task_label_mapping (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  label_id UUID NOT NULL REFERENCES task_labels(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  UNIQUE(task_id, label_id)
+);
+CREATE INDEX idx_task_label_mapping_task ON task_label_mapping(task_id);
+CREATE INDEX idx_task_label_mapping_label ON task_label_mapping(label_id);
+-- ============================================
+-- 8. TASK_DEPENDENCIES TABLE
+-- ============================================
+CREATE TABLE task_dependencies (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  depends_on_task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  dependency_type TEXT DEFAULT 'blocks',
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  UNIQUE(task_id, depends_on_task_id),
+  CHECK (task_id != depends_on_task_id)
+);
+CREATE INDEX idx_task_dependencies_task ON task_dependencies(task_id);
+CREATE INDEX idx_task_dependencies_depends_on ON task_dependencies(depends_on_task_id);
+-- ============================================
+-- 9. TASK_COMMENTS TABLE
+-- ============================================
+CREATE TABLE task_comments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  parent_id UUID REFERENCES task_comments(id) ON DELETE CASCADE,
+  is_edited BOOLEAN DEFAULT false,
+  edited_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_task_comments_task ON task_comments(task_id);
+CREATE INDEX idx_task_comments_user ON task_comments(user_id);
+CREATE INDEX idx_task_comments_parent ON task_comments(parent_id);
+CREATE INDEX idx_task_comments_created ON task_comments(created_at DESC);
+-- ============================================
+-- 10. TASK_ATTACHMENTS TABLE
+-- ============================================
+CREATE TABLE task_attachments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  file_name TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  file_size BIGINT NOT NULL,
+  file_type TEXT NOT NULL,
+  mime_type TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_task_attachments_task ON task_attachments(task_id);
+CREATE INDEX idx_task_attachments_user ON task_attachments(user_id);
+-- ============================================
+-- 11. TASK_CHECKLISTS TABLE
+-- ============================================
+CREATE TABLE task_checklists (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  is_completed BOOLEAN DEFAULT false,
+  completed_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  completed_at TIMESTAMPTZ,
+  position INTEGER DEFAULT 0,
+  created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_task_checklists_task ON task_checklists(task_id);
+CREATE INDEX idx_task_checklists_position ON task_checklists(task_id, position);
+-- ============================================
+-- 12. TASK_WATCHERS TABLE
+-- ============================================
+CREATE TABLE task_watchers (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  UNIQUE(task_id, user_id)
+);
+CREATE INDEX idx_task_watchers_task ON task_watchers(task_id);
+CREATE INDEX idx_task_watchers_user ON task_watchers(user_id);
+-- ============================================
+-- 13. APPROVALS TABLE
+-- ============================================
+CREATE TABLE approvals (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  requested_by UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  approver_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  status approval_status DEFAULT 'pending' NOT NULL,
+  comments TEXT,
+  requested_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  responded_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_approvals_task ON approvals(task_id);
+CREATE INDEX idx_approvals_requested_by ON approvals(requested_by);
+CREATE INDEX idx_approvals_approver ON approvals(approver_id);
+CREATE INDEX idx_approvals_status ON approvals(status);
+-- ============================================
+-- 14. NOTIFICATIONS TABLE
+-- ============================================
+CREATE TABLE notifications (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  type notification_type NOT NULL,
+  title TEXT NOT NULL,
+  message TEXT,
+  data JSONB DEFAULT '{}',
+  is_read BOOLEAN DEFAULT false,
+  read_at TIMESTAMPTZ,
+  task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+  actor_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_notifications_user ON notifications(user_id);
+CREATE INDEX idx_notifications_read ON notifications(user_id, is_read);
+CREATE INDEX idx_notifications_created ON notifications(created_at DESC);
+CREATE INDEX idx_notifications_task ON notifications(task_id);
+-- ============================================
+-- 15. TASK_ACTIVITY_LOGS TABLE
+-- ============================================
+CREATE TABLE task_activity_logs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  field_name TEXT,
+  old_value TEXT,
+  new_value TEXT,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_task_activity_task ON task_activity_logs(task_id);
+CREATE INDEX idx_task_activity_user ON task_activity_logs(user_id);
+CREATE INDEX idx_task_activity_created ON task_activity_logs(created_at DESC);
+-- ============================================
+-- 16. AUDIT_LOGS TABLE
+-- ============================================
+CREATE TABLE audit_logs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id UUID,
+  old_data JSONB,
+  new_data JSONB,
+  ip_address INET,
+  user_agent TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_audit_logs_user ON audit_logs(user_id);
+CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
+CREATE INDEX idx_audit_logs_action ON audit_logs(action);
+CREATE INDEX idx_audit_logs_created ON audit_logs(created_at DESC);
+-- ============================================
+-- 17. USER_SETTINGS TABLE
+-- ============================================
+CREATE TABLE user_settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID UNIQUE NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  theme TEXT DEFAULT 'system',
+  language TEXT DEFAULT 'en',
+  date_format TEXT DEFAULT 'YYYY-MM-DD',
+  time_format TEXT DEFAULT '24h',
+  default_task_view TEXT DEFAULT 'table',
+  sidebar_collapsed BOOLEAN DEFAULT false,
+  settings_data JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_user_settings_user ON user_settings(user_id);
+-- ============================================
+-- 18. NOTIFICATION_PREFERENCES TABLE
+-- ============================================
+CREATE TABLE notification_preferences (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID UNIQUE NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  email_task_assigned BOOLEAN DEFAULT true,
+  email_task_updated BOOLEAN DEFAULT true,
+  email_comments BOOLEAN DEFAULT true,
+  email_mentions BOOLEAN DEFAULT true,
+  email_approvals BOOLEAN DEFAULT true,
+  email_due_reminders BOOLEAN DEFAULT true,
+  email_daily_digest BOOLEAN DEFAULT false,
+  email_weekly_summary BOOLEAN DEFAULT true,
+  push_enabled BOOLEAN DEFAULT true,
+  push_task_assigned BOOLEAN DEFAULT true,
+  push_comments BOOLEAN DEFAULT true,
+  push_mentions BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_notification_prefs_user ON notification_preferences(user_id);
+-- ============================================
+-- 19. EMAIL_TEMPLATES TABLE
+-- ============================================
+CREATE TABLE email_templates (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT UNIQUE NOT NULL,
+  subject TEXT NOT NULL,
+  html_content TEXT NOT NULL,
+  text_content TEXT,
+  variables JSONB DEFAULT '[]',
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_email_templates_name ON email_templates(name);
+-- ============================================
+-- 20. EMAIL_QUEUE TABLE
+-- ============================================
+CREATE TABLE email_queue (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  to_email TEXT NOT NULL,
+  to_name TEXT,
+  subject TEXT NOT NULL,
+  html_content TEXT NOT NULL,
+  text_content TEXT,
+  template_id UUID REFERENCES email_templates(id) ON DELETE SET NULL,
+  status email_status DEFAULT 'queued' NOT NULL,
+  retry_count INTEGER DEFAULT 0,
+  max_retries INTEGER DEFAULT 3,
+  error_message TEXT,
+  provider_response JSONB,
+  scheduled_at TIMESTAMPTZ DEFAULT NOW(),
+  sent_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_email_queue_status ON email_queue(status);
+CREATE INDEX idx_email_queue_scheduled ON email_queue(scheduled_at);
+CREATE INDEX idx_email_queue_to ON email_queue(to_email);
+-- ============================================
+-- 21. EMAIL_LOGS TABLE
+-- ============================================
+CREATE TABLE email_logs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  email_queue_id UUID REFERENCES email_queue(id) ON DELETE SET NULL,
+  user_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  to_email TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  status email_status NOT NULL,
+  provider TEXT,
+  provider_message_id TEXT,
+  opened_at TIMESTAMPTZ,
+  clicked_at TIMESTAMPTZ,
+  bounced_at TIMESTAMPTZ,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_email_logs_user ON email_logs(user_id);
+CREATE INDEX idx_email_logs_status ON email_logs(status);
+CREATE INDEX idx_email_logs_created ON email_logs(created_at DESC);
+-- ============================================
+-- 22. SAVED_FILTERS TABLE
+-- ============================================
+CREATE TABLE saved_filters (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  entity_type TEXT NOT NULL DEFAULT 'task',
+  filters JSONB NOT NULL DEFAULT '{}',
+  is_default BOOLEAN DEFAULT false,
+  is_shared BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+CREATE INDEX idx_saved_filters_user ON saved_filters(user_id);
+CREATE INDEX idx_saved_filters_entity ON saved_filters(entity_type);
+-- ============================================
+-- TRIGGERS
+-- ============================================
+-- Updated timestamp trigger function
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+-- Apply to all tables with updated_at
+CREATE TRIGGER update_profiles_updated_at
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_departments_updated_at
+  BEFORE UPDATE ON departments
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_teams_updated_at
+  BEFORE UPDATE ON teams
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_tasks_updated_at
+  BEFORE UPDATE ON tasks
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_task_labels_updated_at
+  BEFORE UPDATE ON task_labels
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_task_comments_updated_at
+  BEFORE UPDATE ON task_comments
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_task_checklists_updated_at
+  BEFORE UPDATE ON task_checklists
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_approvals_updated_at
+  BEFORE UPDATE ON approvals
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_user_settings_updated_at
+  BEFORE UPDATE ON user_settings
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_notification_preferences_updated_at
+  BEFORE UPDATE ON notification_preferences
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_email_templates_updated_at
+  BEFORE UPDATE ON email_templates
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_email_queue_updated_at
+  BEFORE UPDATE ON email_queue
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- ============================================
+-- TASK ACTIVITY LOG TRIGGER
+-- ============================================
+CREATE OR REPLACE FUNCTION log_task_changes()
+RETURNS TRIGGER AS $$
+DECLARE
+  changes JSONB := '{}';
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    -- Log status changes
+    IF OLD.status IS DISTINCT FROM NEW.status THEN
+      INSERT INTO task_activity_logs (task_id, user_id, action, field_name, old_value, new_value)
+      VALUES (NEW.id, NEW.assignee_id, 'status_changed', 'status', OLD.status::TEXT, NEW.status::TEXT);
+    END IF;
+    
+    -- Log priority changes
+    IF OLD.priority IS DISTINCT FROM NEW.priority THEN
+      INSERT INTO task_activity_logs (task_id, user_id, action, field_name, old_value, new_value)
+      VALUES (NEW.id, NEW.assignee_id, 'priority_changed', 'priority', OLD.priority::TEXT, NEW.priority::TEXT);
+    END IF;
+    
+    -- Log assignee changes
+    IF OLD.assignee_id IS DISTINCT FROM NEW.assignee_id THEN
+      INSERT INTO task_activity_logs (task_id, user_id, action, field_name, old_value, new_value)
+      VALUES (NEW.id, NEW.assignee_id, 'assignee_changed', 'assignee_id', OLD.assignee_id::TEXT, NEW.assignee_id::TEXT);
+    END IF;
+    
+    -- Log due date changes
+    IF OLD.due_date IS DISTINCT FROM NEW.due_date THEN
+      INSERT INTO task_activity_logs (task_id, user_id, action, field_name, old_value, new_value)
+      VALUES (NEW.id, NEW.assignee_id, 'due_date_changed', 'due_date', OLD.due_date::TEXT, NEW.due_date::TEXT);
+    END IF;
+  ELSIF TG_OP = 'INSERT' THEN
+    INSERT INTO task_activity_logs (task_id, user_id, action, metadata)
+    VALUES (NEW.id, NEW.created_by, 'task_created', jsonb_build_object('title', NEW.title));
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER task_changes_trigger
+  AFTER INSERT OR UPDATE ON tasks
+  FOR EACH ROW EXECUTE FUNCTION log_task_changes();
+-- ============================================
+-- AUTO-CREATE PROFILE ON USER SIGNUP
+-- ============================================
+CREATE OR REPLACE FUNCTION handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO profiles (id, email, full_name, avatar_url)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
+    NEW.raw_user_meta_data->>'avatar_url'
+  );
+  
+  -- Create default user settings
+  INSERT INTO user_settings (user_id) VALUES (NEW.id);
+  
+  -- Create default notification preferences
+  INSERT INTO notification_preferences (user_id) VALUES (NEW.id);
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION handle_new_user();
+-- ============================================
+-- NOTIFICATION CREATION FUNCTION
+-- ============================================
+CREATE OR REPLACE FUNCTION create_notification(
+  p_user_id UUID,
+  p_type notification_type,
+  p_title TEXT,
+  p_message TEXT DEFAULT NULL,
+  p_task_id UUID DEFAULT NULL,
+  p_actor_id UUID DEFAULT NULL,
+  p_data JSONB DEFAULT '{}'
+)
+RETURNS UUID AS $$
+DECLARE
+  notification_id UUID;
+BEGIN
+  INSERT INTO notifications (user_id, type, title, message, task_id, actor_id, data)
+  VALUES (p_user_id, p_type, p_title, p_message, p_task_id, p_actor_id, p_data)
+  RETURNING id INTO notification_id;
+  
+  RETURN notification_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+-- ============================================
+-- SLA BREACH CHECK FUNCTION
+-- ============================================
+CREATE OR REPLACE FUNCTION check_sla_breach()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.sla_deadline IS NOT NULL AND NEW.sla_deadline < NOW() AND NEW.status NOT IN ('completed', 'closed', 'archived') THEN
+    NEW.sla_breached := true;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER check_task_sla
+  BEFORE UPDATE ON tasks
+  FOR EACH ROW EXECUTE FUNCTION check_sla_breach();
+Part 2: Row Level Security Policies
+sql
+
+
+-- ============================================
+-- ROW LEVEL SECURITY POLICIES
+-- ============================================
+-- Enable RLS on all tables
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE departments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE team_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_labels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_label_mapping ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_dependencies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_comments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_attachments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_checklists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_watchers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE approvals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_activity_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notification_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_queue ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE saved_filters ENABLE ROW LEVEL SECURITY;
+-- ============================================
+-- HELPER FUNCTIONS FOR RLS
+-- ============================================
+-- Get current user's role
+CREATE OR REPLACE FUNCTION get_user_role()
+RETURNS user_role AS $$
+  SELECT role FROM profiles WHERE id = auth.uid();
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
+-- Check if user is admin or super_admin
+CREATE OR REPLACE FUNCTION is_admin()
+RETURNS BOOLEAN AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM profiles 
+    WHERE id = auth.uid() 
+    AND role IN ('admin', 'super_admin')
+  );
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
+-- Check if user is team manager for a specific team
+CREATE OR REPLACE FUNCTION is_team_manager(team_id UUID)
+RETURNS BOOLEAN AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM teams 
+    WHERE id = team_id 
+    AND manager_id = auth.uid()
+  );
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
+-- Check if user is member of a team
+CREATE OR REPLACE FUNCTION is_team_member(team_id UUID)
+RETURNS BOOLEAN AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM team_members 
+    WHERE team_id = is_team_member.team_id 
+    AND user_id = auth.uid()
+  );
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
+-- Check if user can access a task
+CREATE OR REPLACE FUNCTION can_access_task(task_id UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+  task_record RECORD;
+BEGIN
+  SELECT * INTO task_record FROM tasks WHERE id = task_id;
+  
+  IF task_record IS NULL THEN
+    RETURN FALSE;
+  END IF;
+  
+  -- Admins can access all tasks
+  IF is_admin() THEN
+    RETURN TRUE;
+  END IF;
+  
+  -- Task creator, assignee, or reporter can access
+  IF task_record.created_by = auth.uid() 
+     OR task_record.assignee_id = auth.uid() 
+     OR task_record.reporter_id = auth.uid() THEN
+    RETURN TRUE;
+  END IF;
+  
+  -- Team manager can access team tasks
+  IF task_record.team_id IS NOT NULL AND is_team_manager(task_record.team_id) THEN
+    RETURN TRUE;
+  END IF;
+  
+  -- Team member can access team tasks
+  IF task_record.team_id IS NOT NULL AND is_team_member(task_record.team_id) THEN
+    RETURN TRUE;
+  END IF;
+  
+  -- Watchers can access
+  IF EXISTS (SELECT 1 FROM task_watchers WHERE task_id = can_access_task.task_id AND user_id = auth.uid()) THEN
+    RETURN TRUE;
+  END IF;
+  
+  RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+-- ============================================
+-- PROFILES POLICIES
+-- ============================================
+CREATE POLICY "Users can view all profiles"
+  ON profiles FOR SELECT
+  USING (true);
+CREATE POLICY "Users can update own profile"
+  ON profiles FOR UPDATE
+  USING (id = auth.uid())
+  WITH CHECK (id = auth.uid());
+CREATE POLICY "Admins can update any profile"
+  ON profiles FOR UPDATE
+  USING (is_admin());
+CREATE POLICY "Admins can insert profiles"
+  ON profiles FOR INSERT
+  WITH CHECK (is_admin() OR id = auth.uid());
+-- ============================================
+-- DEPARTMENTS POLICIES
+-- ============================================
+CREATE POLICY "Everyone can view departments"
+  ON departments FOR SELECT
+  USING (true);
+CREATE POLICY "Admins can manage departments"
+  ON departments FOR ALL
+  USING (is_admin());
+-- ============================================
+-- TEAMS POLICIES
+-- ============================================
+CREATE POLICY "Everyone can view active teams"
+  ON teams FOR SELECT
+  USING (is_active = true OR is_admin());
+CREATE POLICY "Admins can manage all teams"
+  ON teams FOR ALL
+  USING (is_admin());
+CREATE POLICY "Team managers can update their teams"
+  ON teams FOR UPDATE
+  USING (manager_id = auth.uid())
+  WITH CHECK (manager_id = auth.uid());
+-- ============================================
+-- TEAM_MEMBERS POLICIES
+-- ============================================
+CREATE POLICY "Everyone can view team members"
+  ON team_members FOR SELECT
+  USING (true);
+CREATE POLICY "Admins can manage team members"
+  ON team_members FOR ALL
+  USING (is_admin());
+CREATE POLICY "Team managers can manage their team members"
+  ON team_members FOR ALL
+  USING (is_team_manager(team_id));
+-- ============================================
+-- TASKS POLICIES
+-- ============================================
+CREATE POLICY "Users can view accessible tasks"
+  ON tasks FOR SELECT
+  USING (can_access_task(id) OR is_admin());
+CREATE POLICY "Authenticated users can create tasks"
+  ON tasks FOR INSERT
+  WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "Task owners and assignees can update tasks"
+  ON tasks FOR UPDATE
+  USING (
+    created_by = auth.uid() 
+    OR assignee_id = auth.uid()
+    OR is_team_manager(team_id)
+    OR is_admin()
+  );
+CREATE POLICY "Admins and creators can delete tasks"
+  ON tasks FOR DELETE
+  USING (created_by = auth.uid() OR is_admin());
+-- ============================================
+-- TASK_LABELS POLICIES
+-- ============================================
+CREATE POLICY "Everyone can view labels"
+  ON task_labels FOR SELECT
+  USING (true);
+CREATE POLICY "Authenticated users can create labels"
+  ON task_labels FOR INSERT
+  WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "Admins can manage labels"
+  ON task_labels FOR ALL
+  USING (is_admin());
+-- ============================================
+-- TASK_LABEL_MAPPING POLICIES
+-- ============================================
+CREATE POLICY "Users can view task label mappings for accessible tasks"
+  ON task_label_mapping FOR SELECT
+  USING (can_access_task(task_id));
+CREATE POLICY "Users can manage labels on accessible tasks"
+  ON task_label_mapping FOR ALL
+  USING (can_access_task(task_id));
+-- ============================================
+-- TASK_DEPENDENCIES POLICIES
+-- ============================================
+CREATE POLICY "Users can view dependencies for accessible tasks"
+  ON task_dependencies FOR SELECT
+  USING (can_access_task(task_id));
+CREATE POLICY "Users can manage dependencies on accessible tasks"
+  ON task_dependencies FOR ALL
+  USING (can_access_task(task_id));
+-- ============================================
+-- TASK_COMMENTS POLICIES
+-- ============================================
+CREATE POLICY "Users can view comments on accessible tasks"
+  ON task_comments FOR SELECT
+  USING (can_access_task(task_id));
+CREATE POLICY "Users can create comments on accessible tasks"
+  ON task_comments FOR INSERT
+  WITH CHECK (can_access_task(task_id) AND user_id = auth.uid());
+CREATE POLICY "Users can update own comments"
+  ON task_comments FOR UPDATE
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+CREATE POLICY "Users can delete own comments or admins"
+  ON task_comments FOR DELETE
+  USING (user_id = auth.uid() OR is_admin());
+-- ============================================
+-- TASK_ATTACHMENTS POLICIES
+-- ============================================
+CREATE POLICY "Users can view attachments on accessible tasks"
+  ON task_attachments FOR SELECT
+  USING (can_access_task(task_id));
+CREATE POLICY "Users can upload attachments on accessible tasks"
+  ON task_attachments FOR INSERT
+  WITH CHECK (can_access_task(task_id) AND user_id = auth.uid());
+CREATE POLICY "Users can delete own attachments"
+  ON task_attachments FOR DELETE
+  USING (user_id = auth.uid() OR is_admin());
+-- ============================================
+-- TASK_CHECKLISTS POLICIES
+-- ============================================
+CREATE POLICY "Users can view checklists on accessible tasks"
+  ON task_checklists FOR SELECT
+  USING (can_access_task(task_id));
+CREATE POLICY "Users can manage checklists on accessible tasks"
+  ON task_checklists FOR ALL
+  USING (can_access_task(task_id));
+-- ============================================
+-- TASK_WATCHERS POLICIES
+-- ============================================
+CREATE POLICY "Users can view watchers on accessible tasks"
+  ON task_watchers FOR SELECT
+  USING (can_access_task(task_id));
+CREATE POLICY "Users can watch accessible tasks"
+  ON task_watchers FOR INSERT
+  WITH CHECK (can_access_task(task_id) AND user_id = auth.uid());
+CREATE POLICY "Users can unwatch tasks"
+  ON task_watchers FOR DELETE
+  USING (user_id = auth.uid());
+-- ============================================
+-- APPROVALS POLICIES
+-- ============================================
+CREATE POLICY "Users can view approvals for accessible tasks"
+  ON approvals FOR SELECT
+  USING (
+    can_access_task(task_id) 
+    OR requested_by = auth.uid() 
+    OR approver_id = auth.uid()
+  );
+CREATE POLICY "Users can request approvals"
+  ON approvals FOR INSERT
+  WITH CHECK (requested_by = auth.uid());
+CREATE POLICY "Approvers and admins can update approvals"
+  ON approvals FOR UPDATE
+  USING (approver_id = auth.uid() OR is_admin());
+-- ============================================
+-- NOTIFICATIONS POLICIES
+-- ============================================
+CREATE POLICY "Users can view own notifications"
+  ON notifications FOR SELECT
+  USING (user_id = auth.uid());
+CREATE POLICY "System can create notifications"
+  ON notifications FOR INSERT
+  WITH CHECK (true);
+CREATE POLICY "Users can update own notifications"
+  ON notifications FOR UPDATE
+  USING (user_id = auth.uid());
+CREATE POLICY "Users can delete own notifications"
+  ON notifications FOR DELETE
+  USING (user_id = auth.uid());
+-- ============================================
+-- TASK_ACTIVITY_LOGS POLICIES
+-- ============================================
+CREATE POLICY "Users can view activity logs for accessible tasks"
+  ON task_activity_logs FOR SELECT
+  USING (can_access_task(task_id));
+CREATE POLICY "System can insert activity logs"
+  ON task_activity_logs FOR INSERT
+  WITH CHECK (true);
+-- ============================================
+-- AUDIT_LOGS POLICIES
+-- ============================================
+CREATE POLICY "Admins can view all audit logs"
+  ON audit_logs FOR SELECT
+  USING (is_admin());
+CREATE POLICY "Users can view own audit logs"
+  ON audit_logs FOR SELECT
+  USING (user_id = auth.uid());
+CREATE POLICY "System can insert audit logs"
+  ON audit_logs FOR INSERT
+  WITH CHECK (true);
+-- ============================================
+-- USER_SETTINGS POLICIES
+-- ============================================
+CREATE POLICY "Users can view own settings"
+  ON user_settings FOR SELECT
+  USING (user_id = auth.uid());
+CREATE POLICY "Users can manage own settings"
+  ON user_settings FOR ALL
+  USING (user_id = auth.uid());
+-- ============================================
+-- NOTIFICATION_PREFERENCES POLICIES
+-- ============================================
+CREATE POLICY "Users can view own preferences"
+  ON notification_preferences FOR SELECT
+  USING (user_id = auth.uid());
+CREATE POLICY "Users can manage own preferences"
+  ON notification_preferences FOR ALL
+  USING (user_id = auth.uid());
+-- ============================================
+-- EMAIL_TEMPLATES POLICIES
+-- ============================================
+CREATE POLICY "Admins can manage email templates"
+  ON email_templates FOR ALL
+  USING (is_admin());
+CREATE POLICY "Everyone can view active templates"
+  ON email_templates FOR SELECT
+  USING (is_active = true);
+-- ============================================
+-- EMAIL_QUEUE POLICIES
+-- ============================================
+CREATE POLICY "Admins can view email queue"
+  ON email_queue FOR SELECT
+  USING (is_admin());
+CREATE POLICY "System can manage email queue"
+  ON email_queue FOR ALL
+  USING (true);
+-- ============================================
+-- EMAIL_LOGS POLICIES
+-- ============================================
+CREATE POLICY "Admins can view all email logs"
+  ON email_logs FOR SELECT
+  USING (is_admin());
+CREATE POLICY "Users can view own email logs"
+  ON email_logs FOR SELECT
+  USING (user_id = auth.uid());
+-- ============================================
+-- SAVED_FILTERS POLICIES
+-- ============================================
+CREATE POLICY "Users can view own and shared filters"
+  ON saved_filters FOR SELECT
+  USING (user_id = auth.uid() OR is_shared = true);
+CREATE POLICY "Users can manage own filters"
+  ON saved_filters FOR ALL
+  USING (user_id = auth.uid());
+-- ============================================
+-- STORAGE POLICIES
+-- ============================================
+-- Create storage bucket for attachments
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('attachments', 'attachments', false)
+ON CONFLICT DO NOTHING;
+-- Storage policies
+CREATE POLICY "Users can upload attachments"
+  ON storage.objects FOR INSERT
+  WITH CHECK (
+    bucket_id = 'attachments' 
+    AND auth.uid() IS NOT NULL
+  );
+CREATE POLICY "Users can view attachments they have access to"
+  ON storage.objects FOR SELECT
+  USING (
+    bucket_id = 'attachments'
+    AND auth.uid() IS NOT NULL
+  );
+CREATE POLICY "Users can delete own attachments"
+  ON storage.objects FOR DELETE
+  USING (
+    bucket_id = 'attachments'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+Part 3: TypeScript Types
+typescript
+
+
+// src/types/database.ts
+export type UserRole = 'super_admin' | 'admin' | 'team_manager' | 'employee' | 'viewer';
+export type TaskStatus =
+  | 'draft'
+  | 'pending'
+  | 'assigned'
+  | 'in_progress'
+  | 'blocked'
+  | 'waiting_review'
+  | 'completed'
+  | 'rejected'
+  | 'closed'
+  | 'archived';
+export type TaskPriority = 'low' | 'medium' | 'high' | 'critical' | 'emergency';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+export type NotificationType =
+  | 'task_assigned'
+  | 'task_updated'
+  | 'task_completed'
+  | 'comment_added'
+  | 'mention'
+  | 'approval_requested'
+  | 'approval_approved'
+  | 'approval_rejected'
+  | 'due_date_approaching'
+  | 'sla_breached'
+  | 'team_added'
+  | 'file_uploaded';
+export type EmailStatus = 'queued' | 'processing' | 'sent' | 'failed' | 'bounced';
+// ============================================
+// DATABASE TYPES
+// ============================================
+export interface Profile {
+  id: string;
+  email: string;
+  full_name: string;
+  avatar_url: string | null;
+  role: UserRole;
+  department_id: string | null;
+  job_title: string | null;
+  phone: string | null;
+  timezone: string;
+  is_active: boolean;
+  last_seen_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface Department {
+  id: string;
+  name: string;
+  description: string | null;
+  head_id: string | null;
+  parent_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+export interface Team {
+  id: string;
+  name: string;
+  description: string | null;
+  department_id: string | null;
+  manager_id: string | null;
+  avatar_url: string | null;
+  color: string;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface TeamMember {
+  id: string;
+  team_id: string;
+  user_id: string;
+  role: string;
+  joined_at: string;
+  created_at: string;
+}
+export interface Task {
+  id: string;
+  task_number: number;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  assignee_id: string | null;
+  team_id: string | null;
+  reporter_id: string | null;
+  due_date: string | null;
+  start_date: string | null;
+  completed_at: string | null;
+  progress: number;
+  estimated_hours: number | null;
+  actual_hours: number | null;
+  sla_deadline: string | null;
+  sla_breached: boolean;
+  parent_task_id: string | null;
+  department_id: string | null;
+  is_archived: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface TaskLabel {
+  id: string;
+  name: string;
+  color: string;
+  description: string | null;
+  organization_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface TaskLabelMapping {
+  id: string;
+  task_id: string;
+  label_id: string;
+  created_at: string;
+}
+export interface TaskDependency {
+  id: string;
+  task_id: string;
+  depends_on_task_id: string;
+  dependency_type: string;
+  created_at: string;
+}
+export interface TaskComment {
+  id: string;
+  task_id: string;
+  user_id: string;
+  content: string;
+  parent_id: string | null;
+  is_edited: boolean;
+  edited_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface TaskAttachment {
+  id: string;
+  task_id: string;
+  user_id: string;
+  file_name: string;
+  file_path: string;
+  file_size: number;
+  file_type: string;
+  mime_type: string | null;
+  created_at: string;
+}
+export interface TaskChecklist {
+  id: string;
+  task_id: string;
+  title: string;
+  is_completed: boolean;
+  completed_by: string | null;
+  completed_at: string | null;
+  position: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface TaskWatcher {
+  id: string;
+  task_id: string;
+  user_id: string;
+  created_at: string;
+}
+export interface Approval {
+  id: string;
+  task_id: string;
+  requested_by: string;
+  approver_id: string | null;
+  status: ApprovalStatus;
+  comments: string | null;
+  requested_at: string;
+  responded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface Notification {
+  id: string;
+  user_id: string;
+  type: NotificationType;
+  title: string;
+  message: string | null;
+  data: Record<string, unknown>;
+  is_read: boolean;
+  read_at: string | null;
+  task_id: string | null;
+  actor_id: string | null;
+  created_at: string;
+}
+export interface TaskActivityLog {
+  id: string;
+  task_id: string;
+  user_id: string | null;
+  action: string;
+  field_name: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+export interface AuditLog {
+  id: string;
+  user_id: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  old_data: Record<string, unknown> | null;
+  new_data: Record<string, unknown> | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+}
+export interface UserSettings {
+  id: string;
+  user_id: string;
+  theme: string;
+  language: string;
+  date_format: string;
+  time_format: string;
+  default_task_view: string;
+  sidebar_collapsed: boolean;
+  settings_data: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+export interface NotificationPreferences {
+  id: string;
+  user_id: string;
+  email_task_assigned: boolean;
+  email_task_updated: boolean;
+  email_comments: boolean;
+  email_mentions: boolean;
+  email_approvals: boolean;
+  email_due_reminders: boolean;
+  email_daily_digest: boolean;
+  email_weekly_summary: boolean;
+  push_enabled: boolean;
+  push_task_assigned: boolean;
+  push_comments: boolean;
+  push_mentions: boolean;
+  created_at: string;
+  updated_at: string;
+}
+export interface EmailTemplate {
+  id: string;
+  name: string;
+  subject: string;
+  html_content: string;
+  text_content: string | null;
+  variables: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+export interface EmailQueue {
+  id: string;
+  to_email: string;
+  to_name: string | null;
+  subject: string;
+  html_content: string;
+  text_content: string | null;
+  template_id: string | null;
+  status: EmailStatus;
+  retry_count: number;
+  max_retries: number;
+  error_message: string | null;
+  provider_response: Record<string, unknown> | null;
+  scheduled_at: string;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface EmailLog {
+  id: string;
+  email_queue_id: string | null;
+  user_id: string | null;
+  to_email: string;
+  subject: string;
+  status: EmailStatus;
+  provider: string | null;
+  provider_message_id: string | null;
+  opened_at: string | null;
+  clicked_at: string | null;
+  bounced_at: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+export interface SavedFilter {
+  id: string;
+  user_id: string;
+  name: string;
+  entity_type: string;
+  filters: Record<string, unknown>;
+  is_default: boolean;
+  is_shared: boolean;
+  created_at: string;
+  updated_at: string;
+}
+// ============================================
+// EXTENDED TYPES WITH RELATIONS
+// ============================================
+export interface TaskWithRelations extends Task {
+  assignee?: Profile | null;
+  team?: Team | null;
+  reporter?: Profile | null;
+  creator?: Profile | null;
+  labels?: TaskLabel[];
+  comments?: TaskCommentWithUser[];
+  attachments?: TaskAttachment[];
+  checklists?: TaskChecklist[];
+  watchers?: Profile[];
+  dependencies?: Task[];
+  dependents?: Task[];
+  subtasks?: Task[];
+  approval?: Approval | null;
+}
+export interface TaskCommentWithUser extends TaskComment {
+  user: Profile;
+  replies?: TaskCommentWithUser[];
+}
+export interface TeamWithRelations extends Team {
+  manager?: Profile | null;
+  department?: Department | null;
+  members?: TeamMemberWithProfile[];
+}
+export interface TeamMemberWithProfile extends TeamMember {
+  user: Profile;
+}
+export interface NotificationWithRelations extends Notification {
+  task?: Task | null;
+  actor?: Profile | null;
+}
+// ============================================
+// API TYPES
+// ============================================
+export interface CreateTaskInput {
+  title: string;
+  description?: string;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  assignee_id?: string;
+  team_id?: string;
+  due_date?: string;
+  start_date?: string;
+  estimated_hours?: number;
+  sla_deadline?: string;
+  parent_task_id?: string;
+  department_id?: string;
+  labels?: string[];
+}
+export interface UpdateTaskInput extends Partial<CreateTaskInput> {
+  progress?: number;
+  actual_hours?: number;
+  completed_at?: string;
+  is_archived?: boolean;
+}
+export interface CreateTeamInput {
+  name: string;
+  description?: string;
+  department_id?: string;
+  manager_id?: string;
+  color?: string;
+}
+export interface UpdateTeamInput extends Partial<CreateTeamInput> {
+  is_active?: boolean;
+}
+export interface TaskFilters {
+  status?: TaskStatus[];
+  priority?: TaskPriority[];
+  assignee_id?: string;
+  team_id?: string;
+  reporter_id?: string;
+  labels?: string[];
+  due_date_from?: string;
+  due_date_to?: string;
+  created_from?: string;
+  created_to?: string;
+  search?: string;
+  is_archived?: boolean;
+}
+export interface PaginationParams {
+  page?: number;
+  limit?: number;
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
+}
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+// ============================================
+// DASHBOARD ANALYTICS TYPES
+// ============================================
+export interface DashboardStats {
+  total_tasks: number;
+  completed_tasks: number;
+  overdue_tasks: number;
+  pending_approvals: number;
+  tasks_by_status: Record<TaskStatus, number>;
+  tasks_by_priority: Record<TaskPriority, number>;
+  completion_rate: number;
+  sla_compliance: number;
+}
+export interface TeamProductivity {
+  team_id: string;
+  team_name: string;
+  total_tasks: number;
+  completed_tasks: number;
+  avg_completion_time: number;
+  completion_rate: number;
+}
+export interface UserWorkload {
+  user_id: string;
+  user_name: string;
+  assigned_tasks: number;
+  completed_tasks: number;
+  overdue_tasks: number;
+  in_progress_tasks: number;
+}
+Part 4: Supabase Client & Services
+typescript
+
+
+// src/integrations/supabase/client.ts
+import { createClient } from '@supabase/supabase-js';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error('Missing Supabase environment variables');
+}
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  },
+  realtime: {
+    params: {
+      eventsPerSecond: 10,
+    },
+  },
+});
+export default supabase;
+typescript
+
+
+// src/services/auth.service.ts
+import { supabase } from '@/integrations/supabase/client';
+import type { Profile, UserRole } from '@/types/database';
+export interface SignUpData {
+  email: string;
+  password: string;
+  full_name: string;
+}
+export interface SignInData {
+  email: string;
+  password: string;
+}
+export const authService = {
+  async signUp({ email, password, full_name }: SignUpData) {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { full_name },
+      },
+    });
+    if (error) throw error;
+    return data;
+  },
+  async signIn({ email, password }: SignInData) {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) throw error;
+    return data;
+  },
+  async signOut() {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+  },
+  async resetPassword(email: string) {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/auth/reset-password`,
+    });
+    if (error) throw error;
+  },
+  async updatePassword(newPassword: string) {
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+    if (error) throw error;
+  },
+  async getSession() {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    return data.session;
+  },
+  async getCurrentUser() {
+    const { data, error } = await supabase.auth.getUser();
+    if (error) throw error;
+    return data.user;
+  },
+  async getProfile(userId: string): Promise<Profile | null> {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw error;
+    }
+    return data;
+  },
+  async updateProfile(userId: string, updates: Partial<Profile>) {
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(updates)
+      .eq('id', userId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+  async inviteUser(email: string, role: UserRole = 'employee') {
+    const { data, error } = await supabase.auth.admin.inviteUserByEmail(email, {
+      data: { role },
+    });
+    if (error) throw error;
+    return data;
+  },
+  onAuthStateChange(callback: (event: string, session: any) => void) {
+    return supabase.auth.onAuthStateChange(callback);
+  },
+};
+typescript
+
+
+// src/services/tasks.service.ts
+import { supabase } from '@/integrations/supabase/client';
+import type {
+  Task,
+  TaskWithRelations,
+  CreateTaskInput,
+  UpdateTaskInput,
+  TaskFilters,
+  PaginationParams,
+  PaginatedResponse,
+  TaskStatus,
+} from '@/types/database';
+export const tasksService = {
+  async getTasks(
+    filters: TaskFilters = {},
+    pagination: PaginationParams = {}
+  ): Promise<PaginatedResponse<TaskWithRelations>> {
+    const {
+      page = 1,
+      limit = 20,
+      sort_by = 'created_at',
+      sort_order = 'desc',
+    } = pagination;
+    let query = supabase
+      .from('tasks')
+      .select(
+        `
+        *,
+        assignee:profiles!tasks_assignee_id_fkey(*),
+        team:teams(*),
+        reporter:profiles!tasks_reporter_id_fkey(*),
+        creator:profiles!tasks_created_by_fkey(*),
+        labels:task_label_mapping(label:task_labels(*))
+      `,
+        { count: 'exact' }
+      );
+    // Apply filters
+    if (filters.status?.length) {
+      query = query.in('status', filters.status);
+    }
+    if (filters.priority?.length) {
+      query = query.in('priority', filters.priority);
+    }
+    if (filters.assignee_id) {
+      query = query.eq('assignee_id', filters.assignee_id);
+    }
+    if (filters.team_id) {
+      query = query.eq('team_id', filters.team_id);
+    }
+    if (filters.reporter_id) {
+      query = query.eq('reporter_id', filters.reporter_id);
+    }
+    if (filters.due_date_from) {
+      query = query.gte('due_date', filters.due_date_from);
+    }
+    if (filters.due_date_to) {
+      query = query.lte('due_date', filters.due_date_to);
+    }
+    if (filters.search) {
+      query = query.or(
+        `title.ilike.%${filters.search}%,description.ilike.%${filters.search}%`
+      );
+    }
+    if (filters.is_archived !== undefined) {
+      query = query.eq('is_archived', filters.is_archived);
+    }
+    // Apply pagination
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    query = query
+      .order(sort_by, { ascending: sort_order === 'asc' })
+      .range(from, to);
+    const { data, error, count } = await query;
+    if (error) throw error;
+    // Transform labels
+    const transformedData = data?.map((task) => ({
+      ...task,
+      labels: task.labels?.map((lm: any) => lm.label) || [],
+    })) as TaskWithRelations[];
+    return {
+      data: transformedData || [],
+      total: count || 0,
+      page,
+      limit,
+      total_pages: Math.ceil((count || 0) / limit),
+    };
+  },
+  async getTaskById(taskId: string): Promise<TaskWithRelations | null> {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select(
+        `
+        *,
+        assignee:profiles!tasks_assignee_id_fkey(*),
+        team:teams(*),
+        reporter:profiles!tasks_reporter_id_fkey(*),
+        creator:profiles!tasks_created_by_fkey(*),
+        labels:task_label_mapping(label:task_labels(*)),
+        comments:task_comments(*, user:profiles(*)),
+        attachments:task_attachments(*),
+        checklists:task_checklists(*),
+        watchers:task_watchers(user:profiles(*)),
+        approval:approvals(*)
+      `
+      )
+      .eq('id', taskId)
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw error;
+    }
+    return {
+      ...data,
+      labels: data.labels?.map((lm: any) => lm.label) || [],
+      watchers: data.watchers?.map((w: any) => w.user) || [],
+      comments: data.comments || [],
+      attachments: data.attachments || [],
+      checklists: data.checklists || [],
+      approval: data.approval?.[0] || null,
+    } as TaskWithRelations;
+  },
+  async createTask(input: CreateTaskInput): Promise<Task> {
+    const { labels, ...taskData } = input;
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert({
+        ...taskData,
+        created_by: user?.id,
+        reporter_id: user?.id,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    // Add labels if provided
+    if (labels?.length) {
+      await supabase.from('task_label_mapping').insert(
+        labels.map((labelId) => ({
+          task_id: data.id,
+          label_id: labelId,
+        }))
+      );
+    }
+    return data;
+  },
+  async updateTask(taskId: string, input: UpdateTaskInput): Promise<Task> {
+    const { labels, ...taskData } = input;
+    const { data, error } = await supabase
+      .from('tasks')
+      .update(taskData)
+      .eq('id', taskId)
+      .select()
+      .single();
+    if (error) throw error;
+    // Update labels if provided
+    if (labels !== undefined) {
+      await supabase
+        .from('task_label_mapping')
+        .delete()
+        .eq('task_id', taskId);
+      if (labels.length) {
+        await supabase.from('task_label_mapping').insert(
+          labels.map((labelId) => ({
+            task_id: taskId,
+            label_id: labelId,
+          }))
+        );
+      }
+    }
+    return data;
+  },
+  async deleteTask(taskId: string): Promise<void> {
+    const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+    if (error) throw error;
+  },
+  async updateTaskStatus(taskId: string, status: TaskStatus): Promise<Task> {
+    const updates: Partial<Task> = { status };
+    if (status === 'completed') {
+      updates.completed_at = new Date().toISOString();
+    }
+    return this.updateTask(taskId, updates);
+  },
+  async submitForApproval(taskId: string): Promise<void> {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    await supabase.from('tasks').update({ status: 'waiting_review' }).eq('id', taskId);
+    await supabase.from('approvals').insert({
+      task_id: taskId,
+      requested_by: user?.id,
+      status: 'pending',
+    });
+  },
+  async approveTask(taskId: string, comments?: string): Promise<void> {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    await supabase
+      .from('approvals')
+      .update({
+        status: 'approved',
+        approver_id: user?.id,
+        comments,
+        responded_at: new Date().toISOString(),
+      })
+      .eq('task_id', taskId)
+      .eq('status', 'pending');
+    await supabase
+      .from('tasks')
+      .update({
+        status: 'closed',
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', taskId);
+  },
+  async rejectTask(taskId: string, comments: string): Promise<void> {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    await supabase
+      .from('approvals')
+      .update({
+        status: 'rejected',
+        approver_id: user?.id,
+        comments,
+        responded_at: new Date().toISOString(),
+      })
+      .eq('task_id', taskId)
+      .eq('status', 'pending');
+    await supabase
+      .from('tasks')
+      .update({ status: 'rejected' })
+      .eq('id', taskId);
+  },
+  async addComment(taskId: string, content: string, parentId?: string) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from('task_comments')
+      .insert({
+        task_id: taskId,
+        user_id: user?.id,
+        content,
+        parent_id: parentId,
+      })
+      .select('*, user:profiles(*)')
+      .single();
+    if (error) throw error;
+    return data;
+  },
+  async updateComment(commentId: string, content: string) {
+    const { data, error } = await supabase
+      .from('task_comments')
+      .update({
+        content,
+        is_edited: true,
+        edited_at: new Date().toISOString(),
+      })
+      .eq('id', commentId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+  async deleteComment(commentId: string): Promise<void> {
+    const { error } = await supabase
+      .from('task_comments')
+      .delete()
+      .eq('id', commentId);
+    if (error) throw error;
+  },
+  async addChecklist(taskId: string, title: string) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from('task_checklists')
+      .insert({
+        task_id: taskId,
+        title,
+        created_by: user?.id,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+  async toggleChecklist(checklistId: string, isCompleted: boolean) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from('task_checklists')
+      .update({
+        is_completed: isCompleted,
+        completed_by: isCompleted ? user?.id : null,
+        completed_at: isCompleted ? new Date().toISOString() : null,
+      })
+      .eq('id', checklistId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+  async watchTask(taskId: string) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { error } = await supabase.from('task_watchers').insert({
+      task_id: taskId,
+      user_id: user?.id,
+    });
+    if (error && error.code !== '23505') throw error; // Ignore duplicate error
+  },
+  async unwatchTask(taskId: string) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { error } = await supabase
+      .from('task_watchers')
+      .delete()
+      .eq('task_id', taskId)
+      .eq('user_id', user?.id);
+    if (error) throw error;
+  },
+  async getTaskActivity(taskId: string) {
+    const { data, error } = await supabase
+      .from('task_activity_logs')
+      .select('*, user:profiles(*)')
+      .eq('task_id', taskId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data;
+  },
+};
+typescript
+
+
+// src/services/teams.service.ts
+import { supabase } from '@/integrations/supabase/client';
+import type {
+  Team,
+  TeamWithRelations,
+  CreateTeamInput,
+  UpdateTeamInput,
+  TeamMemberWithProfile,
+} from '@/types/database';
+export const teamsService = {
+  async getTeams(): Promise<TeamWithRelations[]> {
+    const { data, error } = await supabase
+      .from('teams')
+      .select(
+        `
+        *,
+        manager:profiles!teams_manager_id_fkey(*),
+        department:departments(*),
+        members:team_members(*, user:profiles(*))
+      `
+      )
+      .eq('is_active', true)
+      .order('name');
+    if (error) throw error;
+    return data?.map((team) => ({
+      ...team,
+      members: team.members?.map((m: any) => ({
+        ...m,
+        user: m.user,
+      })) as TeamMemberWithProfile[],
+    })) as TeamWithRelations[];
+  },
+  async getTeamById(teamId: string): Promise<TeamWithRelations | null> {
+    const { data, error } = await supabase
+      .from('teams')
+      .select(
+        `
+        *,
+        manager:profiles!teams_manager_id_fkey(*),
+        department:departments(*),
+        members:team_members(*, user:profiles(*))
+      `
+      )
+      .eq('id', teamId)
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw error;
+    }
+    return {
+      ...data,
+      members: data.members?.map((m: any) => ({
+        ...m,
+        user: m.user,
+      })) as TeamMemberWithProfile[],
+    } as TeamWithRelations;
+  },
+  async createTeam(input: CreateTeamInput): Promise<Team> {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from('teams')
+      .insert({
+        ...input,
+        created_by: user?.id,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+  async updateTeam(teamId: string, input: UpdateTeamInput): Promise<Team> {
+    const { data, error } = await supabase
+      .from('teams')
+      .update(input)
+      .eq('id', teamId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+  async deleteTeam(teamId: string): Promise<void> {
+    const { error } = await supabase
+      .from('teams')
+      .update({ is_active: false })
+      .eq('id', teamId);
+    if (error) throw error;
+  },
+  async addTeamMember(teamId: string, userId: string, role: string = 'member') {
+    const { data, error } = await supabase
+      .from('team_members')
+      .insert({ team_id: teamId, user_id: userId, role })
+      .select('*, user:profiles(*)')
+      .single();
+    if (error) throw error;
+    return data;
+  },
+  async removeTeamMember(teamId: string, userId: string): Promise<void> {
+    const { error } = await supabase
+      .from('team_members')
+      .delete()
+      .eq('team_id', teamId)
+      .eq('user_id', userId);
+    if (error) throw error;
+  },
+  async updateMemberRole(
+    teamId: string,
+    userId: string,
+    role: string
+  ): Promise<void> {
+    const { error } = await supabase
+      .from('team_members')
+      .update({ role })
+      .eq('team_id', teamId)
+      .eq('user_id', userId);
+    if (error) throw error;
+  },
+  async getUserTeams(userId: string): Promise<Team[]> {
+    const { data, error } = await supabase
+      .from('team_members')
+      .select('team:teams(*)')
+      .eq('user_id', userId);
+    if (error) throw error;
+    return data?.map((tm: any) => tm.team).filter(Boolean) || [];
+  },
+};
+typescript
+
+
+// src/services/notifications.service.ts
+import { supabase } from '@/integrations/supabase/client';
+import type { Notification, NotificationWithRelations } from '@/types/database';
+export const notificationsService = {
+  async getNotifications(
+    limit: number = 50
+  ): Promise<NotificationWithRelations[]> {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from('notifications')
+      .select(
+        `
+        *,
+        task:tasks(*),
+        actor:profiles!notifications_actor_id_fkey(*)
+      `
+      )
+      .eq('user_id', user?.id)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return data as NotificationWithRelations[];
+  },
+  async getUnreadCount(): Promise<number> {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { count, error } = await supabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user?.id)
+      .eq('is_read', false);
+    if (error) throw error;
+    return count || 0;
+  },
+  async markAsRead(notificationId: string): Promise<void> {
+    const { error } = await supabase
+      .from('notifications')
+      .update({
+        is_read: true,
+        read_at: new Date().toISOString(),
+      })
+      .eq('id', notificationId);
+    if (error) throw error;
+  },
+  async markAllAsRead(): Promise<void> {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { error } = await supabase
+      .from('notifications')
+      .update({
+        is_read: true,
+        read_at: new Date().toISOString(),
+      })
+      .eq('user_id', user?.id)
+      .eq('is_read', false);
+    if (error) throw error;
+  },
+  async deleteNotification(notificationId: string): Promise<void> {
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('id', notificationId);
+    if (error) throw error;
+  },
+  subscribeToNotifications(
+    userId: string,
+    callback: (notification: Notification) => void
+  ) {
+    return supabase
+      .channel(`notifications:${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          callback(payload.new as Notification);
+        }
+      )
+      .subscribe();
+  },
+};
+typescript
+
+
+// src/services/storage.service.ts
+import { supabase } from '@/integrations/supabase/client';
+import type { TaskAttachment } from '@/types/database';
+const ALLOWED_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/zip',
+  'video/mp4',
+  'video/webm',
+];
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+export const storageService = {
+  validateFile(file: File): { valid: boolean; error?: string } {
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      return {
+        valid: false,
+        error: `File type ${file.type} is not allowed`,
+      };
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      return {
+        valid: false,
+        error: `File size exceeds maximum of ${MAX_FILE_SIZE / 1024 / 1024}MB`,
+      };
+    }
+    return { valid: true };
+  },
+  async uploadTaskAttachment(
+    taskId: string,
+    file: File
+  ): Promise<TaskAttachment> {
+    const validation = this.validateFile(file);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    // Generate unique file path
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${crypto.randomUUID()}.${fileExt}`;
+    const filePath = `${user?.id}/${taskId}/${fileName}`;
+    // Upload to storage
+    const { error: uploadError } = await supabase.storage
+      .from('attachments')
+      .upload(filePath, file, {
+        cacheControl: '3600',
+        upsert: false,
+      });
+    if (uploadError) throw uploadError;
+    // Create attachment record
+    const { data, error } = await supabase
+      .from('task_attachments')
+      .insert({
+        task_id: taskId,
+        user_id: user?.id,
+        file_name: file.name,
+        file_path: filePath,
+        file_size: file.size,
+        file_type: fileExt || 'unknown',
+        mime_type: file.type,
+      })
+      .select()
+      .single();
+    if (error) {
+      // Clean up uploaded file if record creation fails
+      await supabase.storage.from('attachments').remove([filePath]);
+      throw error;
+    }
+    return data;
+  },
+  async deleteAttachment(attachment: TaskAttachment): Promise<void> {
+    // Delete from storage
+    const { error: storageError } = await supabase.storage
+      .from('attachments')
+      .remove([attachment.file_path]);
+    if (storageError) throw storageError;
+    // Delete record
+    const { error } = await supabase
+      .from('task_attachments')
+      .delete()
+      .eq('id', attachment.id);
+    if (error) throw error;
+  },
+  async getAttachmentUrl(filePath: string): Promise<string> {
+    const { data } = await supabase.storage
+      .from('attachments')
+      .createSignedUrl(filePath, 3600); // 1 hour expiry
+    if (!data?.signedUrl) {
+      throw new Error('Failed to generate download URL');
+    }
+    return data.signedUrl;
+  },
+  async downloadAttachment(attachment: TaskAttachment): Promise<void> {
+    const url = await this.getAttachmentUrl(attachment.file_path);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = attachment.file_name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  },
+};
+typescript
+
+
+// src/services/analytics.service.ts
+import { supabase } from '@/integrations/supabase/client';
+import type {
+  DashboardStats,
+  TeamProductivity,
+  UserWorkload,
+  TaskStatus,
+  TaskPriority,
+} from '@/types/database';
+export const analyticsService = {
+  async getDashboardStats(): Promise<DashboardStats> {
+    // Get task counts by status
+    const { data: tasks, error } = await supabase
+      .from('tasks')
+      .select('status, priority, due_date, sla_breached')
+      .eq('is_archived', false);
+    if (error) throw error;
+    const now = new Date();
+    const totalTasks = tasks?.length || 0;
+    const completedTasks =
+      tasks?.filter((t) => ['completed', 'closed'].includes(t.status)).length || 0;
+    const overdueTasks =
+      tasks?.filter(
+        (t) =>
+          t.due_date &&
+          new Date(t.due_date) < now &&
+          !['completed', 'closed', 'archived'].includes(t.status)
+      ).length || 0;
+    const tasksByStatus = tasks?.reduce(
+      (acc, task) => {
+        acc[task.status] = (acc[task.status] || 0) + 1;
+        return acc;
+      },
+      {} as Record<TaskStatus, number>
+    ) || {} as Record<TaskStatus, number>;
+    const tasksByPriority = tasks?.reduce(
+      (acc, task) => {
+        acc[task.priority] = (acc[task.priority] || 0) + 1;
+        return acc;
+      },
+      {} as Record<TaskPriority, number>
+    ) || {} as Record<TaskPriority, number>;
+    // Get pending approvals
+    const { count: pendingApprovals } = await supabase
+      .from('approvals')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'pending');
+    // Calculate SLA compliance
+    const slaBreached = tasks?.filter((t) => t.sla_breached).length || 0;
+    const tasksWithSla = tasks?.filter((t) => t.sla_breached !== null).length || 1;
+    return {
+      total_tasks: totalTasks,
+      completed_tasks: completedTasks,
+      overdue_tasks: overdueTasks,
+      pending_approvals: pendingApprovals || 0,
+      tasks_by_status: tasksByStatus,
+      tasks_by_priority: tasksByPriority,
+      completion_rate: totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0,
+      sla_compliance:
+        tasksWithSla > 0
+          ? ((tasksWithSla - slaBreached) / tasksWithSla) * 100
+          : 100,
+    };
+  },
+  async getTeamProductivity(): Promise<TeamProductivity[]> {
+    const { data: teams, error } = await supabase
+      .from('teams')
+      .select('id, name')
+      .eq('is_active', true);
+    if (error) throw error;
+    const productivity: TeamProductivity[] = [];
+    for (const team of teams || []) {
+      const { data: tasks } = await supabase
+        .from('tasks')
+        .select('status, created_at, completed_at')
+        .eq('team_id', team.id)
+        .eq('is_archived', false);
+      const totalTasks = tasks?.length || 0;
+      const completedTasks =
+        tasks?.filter((t) => ['completed', 'closed'].includes(t.status)).length || 0;
+      // Calculate average completion time
+      const completedWithTime =
+        tasks?.filter((t) => t.completed_at && t.created_at) || [];
+      const avgCompletionTime =
+        completedWithTime.length > 0
+          ? completedWithTime.reduce((sum, t) => {
+              const created = new Date(t.created_at).getTime();
+              const completed = new Date(t.completed_at!).getTime();
+              return sum + (completed - created);
+            }, 0) / completedWithTime.length
+          : 0;
+      productivity.push({
+        team_id: team.id,
+        team_name: team.name,
+        total_tasks: totalTasks,
+        completed_tasks: completedTasks,
+        avg_completion_time: avgCompletionTime / (1000 * 60 * 60), // Convert to hours
+        completion_rate: totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0,
+      });
+    }
+    return productivity;
+  },
+  async getUserWorkload(): Promise<UserWorkload[]> {
+    const { data: users, error } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .eq('is_active', true)
+      .in('role', ['employee', 'team_manager']);
+    if (error) throw error;
+    const workload: UserWorkload[] = [];
+    const now = new Date();
+    for (const user of users || []) {
+      const { data: tasks } = await supabase
+        .from('tasks')
+        .select('status, due_date')
+        .eq('assignee_id', user.id)
+        .eq('is_archived', false);
+      const assignedTasks = tasks?.length || 0;
+      const completedTasks =
+        tasks?.filter((t) => ['completed', 'closed'].includes(t.status)).length || 0;
+      const overdueTasks =
+        tasks?.filter(
+          (t) =>
+            t.due_date &&
+            new Date(t.due_date) < now &&
+            !['completed', 'closed', 'archived'].includes(t.status)
+        ).length || 0;
+      const inProgressTasks =
+        tasks?.filter((t) => t.status === 'in_progress').length || 0;
+      workload.push({
+        user_id: user.id,
+        user_name: user.full_name,
+        assigned_tasks: assignedTasks,
+        completed_tasks: completedTasks,
+        overdue_tasks: overdueTasks,
+        in_progress_tasks: inProgressTasks,
+      });
+    }
+    return workload;
+  },
+};
+Part 5: State Management (Zustand)
+typescript
+
+
+// src/store/auth.store.ts
+import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import type { Profile } from '@/types/database';
+import type { User, Session } from '@supabase/supabase-js';
+interface AuthState {
+  user: User | null;
+  profile: Profile | null;
+  session: Session | null;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+  
+  setUser: (user: User | null) => void;
+  setProfile: (profile: Profile | null) => void;
+  setSession: (session: Session | null) => void;
+  setIsLoading: (loading: boolean) => void;
+  logout: () => void;
+}
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
+      user: null,
+      profile: null,
+      session: null,
+      isLoading: true,
+      isAuthenticated: false,
+      setUser: (user) =>
+        set({ user, isAuthenticated: !!user }),
+      setProfile: (profile) => set({ profile }),
+      setSession: (session) =>
+        set({
+          session,
+          user: session?.user || null,
+          isAuthenticated: !!session,
+        }),
+      setIsLoading: (isLoading) => set({ isLoading }),
+      logout: () =>
+        set({
+          user: null,
+          profile: null,
+          session: null,
+          isAuthenticated: false,
+        }),
+    }),
+    {
+      name: 'auth-storage',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        user: state.user,
+        profile: state.profile,
+      }),
+    }
+  )
+);
+typescript
+
+
+// src/store/ui.store.ts
+import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+type TaskView = 'table' | 'kanban' | 'calendar' | 'timeline';
+type Theme = 'light' | 'dark' | 'system';
+interface UIState {
+  sidebarCollapsed: boolean;
+  taskView: TaskView;
+  theme: Theme;
+  commandMenuOpen: boolean;
+  
+  toggleSidebar: () => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  setTaskView: (view: TaskView) => void;
+  setTheme: (theme: Theme) => void;
+  setCommandMenuOpen: (open: boolean) => void;
+}
+export const useUIStore = create<UIState>()(
+  persist(
+    (set) => ({
+      sidebarCollapsed: false,
+      taskView: 'table',
+      theme: 'system',
+      commandMenuOpen: false,
+      toggleSidebar: () =>
+        set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+      setSidebarCollapsed: (collapsed) =>
+        set({ sidebarCollapsed: collapsed }),
+      setTaskView: (view) => set({ taskView: view }),
+      setTheme: (theme) => set({ theme }),
+      setCommandMenuOpen: (open) => set({ commandMenuOpen: open }),
+    }),
+    {
+      name: 'ui-storage',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        sidebarCollapsed: state.sidebarCollapsed,
+        taskView: state.taskView,
+        theme: state.theme,
+      }),
+    }
+  )
+);
+typescript
+
+
+// src/store/notifications.store.ts
+import { create } from 'zustand';
+import type { NotificationWithRelations } from '@/types/database';
+interface NotificationsState {
+  notifications: NotificationWithRelations[];
+  unreadCount: number;
+  isLoading: boolean;
+  
+  setNotifications: (notifications: NotificationWithRelations[]) => void;
+  addNotification: (notification: NotificationWithRelations) => void;
+  markAsRead: (id: string) => void;
+  markAllAsRead: () => void;
+  setUnreadCount: (count: number) => void;
+  setIsLoading: (loading: boolean) => void;
+}
+export const useNotificationsStore = create<NotificationsState>((set) => ({
+  notifications: [],
+  unreadCount: 0,
+  isLoading: false,
+  setNotifications: (notifications) =>
+    set({
+      notifications,
+      unreadCount: notifications.filter((n) => !n.is_read).length,
+    }),
+  addNotification: (notification) =>
+    set((state) => ({
+      notifications: [notification, ...state.notifications],
+      unreadCount: state.unreadCount + (notification.is_read ? 0 : 1),
+    })),
+  markAsRead: (id) =>
+    set((state) => ({
+      notifications: state.notifications.map((n) =>
+        n.id === id ? { ...n, is_read: true } : n
+      ),
+      unreadCount: Math.max(0, state.unreadCount - 1),
+    })),
+  markAllAsRead: () =>
+    set((state) => ({
+      notifications: state.notifications.map((n) => ({
+        ...n,
+        is_read: true,
+      })),
+      unreadCount: 0,
+    })),
+  setUnreadCount: (count) => set({ unreadCount: count }),
+  setIsLoading: (isLoading) => set({ isLoading }),
+}));
+Part 6: React Query Hooks
+typescript
+
+
+// src/hooks/use-tasks.ts
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { tasksService } from '@/services/tasks.service';
+import type {
+  TaskFilters,
+  PaginationParams,
+  CreateTaskInput,
+  UpdateTaskInput,
+  TaskStatus,
+} from '@/types/database';
+import { toast } from 'sonner';
+export const taskKeys = {
+  all: ['tasks'] as const,
+  lists: () => [...taskKeys.all, 'list'] as const,
+  list: (filters: TaskFilters, pagination: PaginationParams) =>
+    [...taskKeys.lists(), filters, pagination] as const,
+  details: () => [...taskKeys.all, 'detail'] as const,
+  detail: (id: string) => [...taskKeys.details(), id] as const,
+  activity: (id: string) => [...taskKeys.detail(id), 'activity'] as const,
+};
+export function useTasks(
+  filters: TaskFilters = {},
+  pagination: PaginationParams = {}
+) {
+  return useQuery({
+    queryKey: taskKeys.list(filters, pagination),
+    queryFn: () => tasksService.getTasks(filters, pagination),
+  });
+}
+export function useTask(taskId: string) {
+  return useQuery({
+    queryKey: taskKeys.detail(taskId),
+    queryFn: () => tasksService.getTaskById(taskId),
+    enabled: !!taskId,
+  });
+}
+export function useTaskActivity(taskId: string) {
+  return useQuery({
+    queryKey: taskKeys.activity(taskId),
+    queryFn: () => tasksService.getTaskActivity(taskId),
+    enabled: !!taskId,
+  });
+}
+export function useCreateTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateTaskInput) => tasksService.createTask(input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.lists() });
+      toast.success('Task created successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to create task: ${error.message}`);
+    },
+  });
+}
+export function useUpdateTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ taskId, input }: { taskId: string; input: UpdateTaskInput }) =>
+      tasksService.updateTask(taskId, input),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(data.id) });
+      toast.success('Task updated successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to update task: ${error.message}`);
+    },
+  });
+}
+export function useDeleteTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => tasksService.deleteTask(taskId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.lists() });
+      toast.success('Task deleted successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to delete task: ${error.message}`);
+    },
+  });
+}
+export function useUpdateTaskStatus() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ taskId, status }: { taskId: string; status: TaskStatus }) =>
+      tasksService.updateTaskStatus(taskId, status),
+    onMutate: async ({ taskId, status }) => {
+      await queryClient.cancelQueries({ queryKey: taskKeys.detail(taskId) });
+      
+      const previousTask = queryClient.getQueryData(taskKeys.detail(taskId));
+      
+      queryClient.setQueryData(taskKeys.detail(taskId), (old: any) => ({
+        ...old,
+        status,
+      }));
+      
+      return { previousTask };
+    },
+    onError: (err, { taskId }, context) => {
+      queryClient.setQueryData(taskKeys.detail(taskId), context?.previousTask);
+      toast.error('Failed to update status');
+    },
+    onSettled: (_, __, { taskId }) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+      queryClient.invalidateQueries({ queryKey: taskKeys.lists() });
+    },
+  });
+}
+export function useSubmitForApproval() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => tasksService.submitForApproval(taskId),
+    onSuccess: (_, taskId) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+      queryClient.invalidateQueries({ queryKey: taskKeys.lists() });
+      toast.success('Task submitted for approval');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to submit for approval: ${error.message}`);
+    },
+  });
+}
+export function useApproveTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ taskId, comments }: { taskId: string; comments?: string }) =>
+      tasksService.approveTask(taskId, comments),
+    onSuccess: (_, { taskId }) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+      queryClient.invalidateQueries({ queryKey: taskKeys.lists() });
+      toast.success('Task approved');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to approve task: ${error.message}`);
+    },
+  });
+}
+export function useRejectTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ taskId, comments }: { taskId: string; comments: string }) =>
+      tasksService.rejectTask(taskId, comments),
+    onSuccess: (_, { taskId }) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+      queryClient.invalidateQueries({ queryKey: taskKeys.lists() });
+      toast.success('Task rejected');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to reject task: ${error.message}`);
+    },
+  });
+}
+export function useAddComment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      taskId,
+      content,
+      parentId,
+    }: {
+      taskId: string;
+      content: string;
+      parentId?: string;
+    }) => tasksService.addComment(taskId, content, parentId),
+    onSuccess: (_, { taskId }) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+      toast.success('Comment added');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to add comment: ${error.message}`);
+    },
+  });
+}
+export function useAddChecklist() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ taskId, title }: { taskId: string; title: string }) =>
+      tasksService.addChecklist(taskId, title),
+    onSuccess: (_, { taskId }) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to add checklist item: ${error.message}`);
+    },
+  });
+}
+export function useToggleChecklist() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      checklistId,
+      isCompleted,
+      taskId,
+    }: {
+      checklistId: string;
+      isCompleted: boolean;
+      taskId: string;
+    }) => tasksService.toggleChecklist(checklistId, isCompleted),
+    onSuccess: (_, { taskId }) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+    },
+  });
+}
+export function useWatchTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => tasksService.watchTask(taskId),
+    onSuccess: (_, taskId) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+      toast.success('Now watching this task');
+    },
+  });
+}
+export function useUnwatchTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => tasksService.unwatchTask(taskId),
+    onSuccess: (_, taskId) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+      toast.success('Stopped watching this task');
+    },
+  });
+}
+typescript
+
+
+// src/hooks/use-teams.ts
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { teamsService } from '@/services/teams.service';
+import type { CreateTeamInput, UpdateTeamInput } from '@/types/database';
+import { toast } from 'sonner';
+export const teamKeys = {
+  all: ['teams'] as const,
+  lists: () => [...teamKeys.all, 'list'] as const,
+  details: () => [...teamKeys.all, 'detail'] as const,
+  detail: (id: string) => [...teamKeys.details(), id] as const,
+  userTeams: (userId: string) => [...teamKeys.all, 'user', userId] as const,
+};
+export function useTeams() {
+  return useQuery({
+    queryKey: teamKeys.lists(),
+    queryFn: () => teamsService.getTeams(),
+  });
+}
+export function useTeam(teamId: string) {
+  return useQuery({
+    queryKey: teamKeys.detail(teamId),
+    queryFn: () => teamsService.getTeamById(teamId),
+    enabled: !!teamId,
+  });
+}
+export function useUserTeams(userId: string) {
+  return useQuery({
+    queryKey: teamKeys.userTeams(userId),
+    queryFn: () => teamsService.getUserTeams(userId),
+    enabled: !!userId,
+  });
+}
+export function useCreateTeam() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateTeamInput) => teamsService.createTeam(input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
+      toast.success('Team created successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to create team: ${error.message}`);
+    },
+  });
+}
+export function useUpdateTeam() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ teamId, input }: { teamId: string; input: UpdateTeamInput }) =>
+      teamsService.updateTeam(teamId, input),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: teamKeys.detail(data.id) });
+      toast.success('Team updated successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to update team: ${error.message}`);
+    },
+  });
+}
+export function useDeleteTeam() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (teamId: string) => teamsService.deleteTeam(teamId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
+      toast.success('Team deleted successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to delete team: ${error.message}`);
+    },
+  });
+}
+export function useAddTeamMember() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      teamId,
+      userId,
+      role,
+    }: {
+      teamId: string;
+      userId: string;
+      role?: string;
+    }) => teamsService.addTeamMember(teamId, userId, role),
+    onSuccess: (_, { teamId }) => {
+      queryClient.invalidateQueries({ queryKey: teamKeys.detail(teamId) });
+      toast.success('Team member added');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to add team member: ${error.message}`);
+    },
+  });
+}
+export function useRemoveTeamMember() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ teamId, userId }: { teamId: string; userId: string }) =>
+      teamsService.removeTeamMember(teamId, userId),
+    onSuccess: (_, { teamId }) => {
+      queryClient.invalidateQueries({ queryKey: teamKeys.detail(teamId) });
+      toast.success('Team member removed');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to remove team member: ${error.message}`);
+    },
+  });
+}
+typescript
+
+
+// src/hooks/use-auth.ts
+import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { authService } from '@/services/auth.service';
+import { useAuthStore } from '@/store/auth.store';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
+export function useAuth() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const {
+    user,
+    profile,
+    session,
+    isLoading,
+    isAuthenticated,
+    setUser,
+    setProfile,
+    setSession,
+    setIsLoading,
+    logout: clearAuth,
+  } = useAuthStore();
+  // Initialize auth state
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        const session = await authService.getSession();
+        setSession(session);
+        if (session?.user) {
+          const profile = await authService.getProfile(session.user.id);
+          setProfile(profile);
+        }
+      } catch (error) {
+        console.error('Auth initialization error:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    initAuth();
+    // Listen for auth changes
+    const {
+      data: { subscription },
+    } = authService.onAuthStateChange(async (event, session) => {
+      setSession(session);
+      if (session?.user) {
+        const profile = await authService.getProfile(session.user.id);
+        setProfile(profile);
+      } else {
+        setProfile(null);
+      }
+      if (event === 'SIGNED_OUT') {
+        queryClient.clear();
+        navigate('/auth/login');
+      }
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+  const signIn = useMutation({
+    mutationFn: authService.signIn,
+    onSuccess: () => {
+      toast.success('Welcome back!');
+      navigate('/dashboard');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+  const signUp = useMutation({
+    mutationFn: authService.signUp,
+    onSuccess: () => {
+      toast.success('Account created! Please check your email to verify.');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+  const signOut = useMutation({
+    mutationFn: authService.signOut,
+    onSuccess: () => {
+      clearAuth();
+      queryClient.clear();
+      toast.success('Signed out successfully');
+      navigate('/auth/login');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+  const resetPassword = useMutation({
+    mutationFn: authService.resetPassword,
+    onSuccess: () => {
+      toast.success('Password reset email sent');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+  const updatePassword = useMutation({
+    mutationFn: authService.updatePassword,
+    onSuccess: () => {
+      toast.success('Password updated successfully');
+      navigate('/dashboard');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+  const updateProfile = useMutation({
+    mutationFn: (updates: Partial<typeof profile>) =>
+      authService.updateProfile(user!.id, updates),
+    onSuccess: (data) => {
+      setProfile(data);
+      toast.success('Profile updated');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+  return {
+    user,
+    profile,
+    session,
+    isLoading,
+    isAuthenticated,
+    signIn,
+    signUp,
+    signOut,
+    resetPassword,
+    updatePassword,
+    updateProfile,
+  };
+}
+typescript
+
+
+// src/hooks/use-realtime.ts
+import { useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuthStore } from '@/store/auth.store';
+import { useNotificationsStore } from '@/store/notifications.store';
+import { taskKeys } from './use-tasks';
+import { teamKeys } from './use-teams';
+import type { RealtimeChannel } from '@supabase/supabase-js';
+export function useRealtime() {
+  const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  const { addNotification } = useNotificationsStore();
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  useEffect(() => {
+    if (!user?.id) return;
+    // Create a single channel for all subscriptions
+    const channel = supabase.channel(`realtime:${user.id}`);
+    // Subscribe to task changes
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'tasks',
+      },
+      (payload) => {
+        // Invalidate task queries
+        queryClient.invalidateQueries({ queryKey: taskKeys.lists() });
+        
+        if (payload.new && typeof payload.new === 'object' && 'id' in payload.new) {
+          queryClient.invalidateQueries({
+            queryKey: taskKeys.detail(payload.new.id as string),
+          });
+        }
+      }
+    );
+    // Subscribe to comments
+    channel.on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'task_comments',
+      },
+      (payload) => {
+        if (payload.new && typeof payload.new === 'object' && 'task_id' in payload.new) {
+          queryClient.invalidateQueries({
+            queryKey: taskKeys.detail(payload.new.task_id as string),
+          });
+        }
+      }
+    );
+    // Subscribe to notifications
+    channel.on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'notifications',
+        filter: `user_id=eq.${user.id}`,
+      },
+      (payload) => {
+        if (payload.new) {
+          addNotification(payload.new as any);
+        }
+      }
+    );
+    // Subscribe to team changes
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'teams',
+      },
+      () => {
+        queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
+      }
+    );
+    // Subscribe to team members
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'team_members',
+      },
+      (payload) => {
+        if (payload.new && typeof payload.new === 'object' && 'team_id' in payload.new) {
+          queryClient.invalidateQueries({
+            queryKey: teamKeys.detail(payload.new.team_id as string),
+          });
+        }
+      }
+    );
+    channel.subscribe();
+    channelRef.current = channel;
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [user?.id, queryClient, addNotification]);
+  return channelRef.current;
+}
+Part 7: Core Components
+typescript
+
+
+// src/components/layout/app-layout.tsx
+import { Outlet } from 'react-router-dom';
+import { Sidebar } from './sidebar';
+import { Header } from './header';
+import { useUIStore } from '@/store/ui.store';
+import { cn } from '@/lib/utils';
+export function AppLayout() {
+  const { sidebarCollapsed } = useUIStore();
+  return (
+    <div className="min-h-screen bg-background">
+      <Sidebar />
+      <div
+        className={cn(
+          'transition-all duration-300',
+          sidebarCollapsed ? 'ml-16' : 'ml-64'
+        )}
+      >
+        <Header />
+        <main className="p-6">
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+}
+typescript
+
+
+// src/components/layout/sidebar.tsx
+import { NavLink, useLocation } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import {
+  LayoutDashboard,
+  CheckSquare,
+  Users,
+  Building2,
+  BarChart3,
+  Bell,
+  Calendar,
+  Settings,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Activity,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useUIStore } from '@/store/ui.store';
+import { useAuthStore } from '@/store/auth.store';
+import { cn } from '@/lib/utils';
+const navigation = [
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'Tasks', href: '/tasks', icon: CheckSquare },
+  { name: 'Teams', href: '/teams', icon: Users },
+  { name: 'Calendar', href: '/calendar', icon: Calendar },
+  { name: 'Reports', href: '/reports', icon: BarChart3 },
+  { name: 'Activity', href: '/activity', icon: Activity },
+  { name: 'Notifications', href: '/notifications', icon: Bell },
+];
+const adminNavigation = [
+  { name: 'Users', href: '/users', icon: Users },
+  { name: 'Departments', href: '/departments', icon: Building2 },
+  { name: 'Audit Logs', href: '/audit-logs', icon: FileText },
+];
+export function Sidebar() {
+  const location = useLocation();
+  const { sidebarCollapsed, toggleSidebar } = useUIStore();
+  const { profile } = useAuthStore();
+  const isAdmin = profile?.role === 'admin' || profile?.role === 'super_admin';
+  const NavItem = ({
+    item,
+  }: {
+    item: { name: string; href: string; icon: any };
+  }) => {
+    const isActive = location.pathname.startsWith(item.href);
+    const Icon = item.icon;
+    const content = (
+      <NavLink
+        to={item.href}
+        className={cn(
+          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+          isActive
+            ? 'bg-primary text-primary-foreground'
+            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+        )}
+      >
+        <Icon className="h-5 w-5 shrink-0" />
+        {!sidebarCollapsed && (
+          <motion.span
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            {item.name}
+          </motion.span>
+        )}
+      </NavLink>
+    );
+    if (sidebarCollapsed) {
+      return (
+        <Tooltip delayDuration={0}>
+          <TooltipTrigger asChild>{content}</TooltipTrigger>
+          <TooltipContent side="right" className="font-medium">
+            {item.name}
+          </TooltipContent>
+        </Tooltip>
+      );
+    }
+    return content;
+  };
+  return (
+    <motion.aside
+      className={cn(
+        'fixed left-0 top-0 z-40 h-screen border-r bg-card transition-all duration-300',
+        sidebarCollapsed ? 'w-16' : 'w-64'
+      )}
+      animate={{ width: sidebarCollapsed ? 64 : 256 }}
+    >
+      <div className="flex h-16 items-center justify-between border-b px-4">
+        {!sidebarCollapsed && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex items-center gap-2"
+          >
+            <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
+              <CheckSquare className="h-5 w-5 text-primary-foreground" />
+            </div>
+            <span className="font-bold text-lg">WorkFlow</span>
+          </motion.div>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleSidebar}
+          className="h-8 w-8"
+        >
+          {sidebarCollapsed ? (
+            <ChevronRight className="h-4 w-4" />
+          ) : (
+            <ChevronLeft className="h-4 w-4" />
+          )}
+        </Button>
+      </div>
+      <ScrollArea className="h-[calc(100vh-4rem)] px-3 py-4">
+        <nav className="space-y-1">
+          {navigation.map((item) => (
+            <NavItem key={item.href} item={item} />
+          ))}
+        </nav>
+        {isAdmin && (
+          <>
+            <div className="my-4 border-t" />
+            {!sidebarCollapsed && (
+              <p className="mb-2 px-3 text-xs font-semibold uppercase text-muted-foreground">
+                Admin
+              </p>
+            )}
+            <nav className="space-y-1">
+              {adminNavigation.map((item) => (
+                <NavItem key={item.href} item={item} />
+              ))}
+            </nav>
+          </>
+        )}
+        <div className="mt-auto pt-4 border-t">
+          <NavItem
+            item={{ name: 'Settings', href: '/settings', icon: Settings }}
+          />
+        </div>
+      </ScrollArea>
+    </motion.aside>
+  );
+}
+typescript
+
+
+// src/components/layout/header.tsx
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  Bell,
+  Search,
+  Moon,
+  Sun,
+  LogOut,
+  User,
+  Settings,
+  Command,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { useAuth } from '@/hooks/use-auth';
+import { useUIStore } from '@/store/ui.store';
+import { useNotificationsStore } from '@/store/notifications.store';
+import { NotificationsPopover } from '@/components/notifications/notifications-popover';
+import { CommandMenu } from '@/components/common/command-menu';
+export function Header() {
+  const navigate = useNavigate();
+  const { profile, signOut } = useAuth();
+  const { theme, setTheme, setCommandMenuOpen } = useUIStore();
+  const { unreadCount } = useNotificationsStore();
+  const [searchQuery, setSearchQuery] = useState('');
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      navigate(`/tasks?search=${encodeURIComponent(searchQuery)}`);
+    }
+  };
+  const toggleTheme = () => {
+    setTheme(theme === 'dark' ? 'light' : 'dark');
+  };
+  const getInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map((n) => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+  return (
+    <>
+      <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
+        <form onSubmit={handleSearch} className="flex-1 max-w-md">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search tasks..."
+              className="pl-9 pr-12"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-xs font-medium opacity-100 sm:flex">
+              <span className="text-xs">⌘</span>K
+            </kbd>
+          </div>
+        </form>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setCommandMenuOpen(true)}
+            className="hidden md:flex"
+          >
+            <Command className="h-5 w-5" />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={toggleTheme}>
+            {theme === 'dark' ? (
+              <Sun className="h-5 w-5" />
+            ) : (
+              <Moon className="h-5 w-5" />
+            )}
+          </Button>
+          <NotificationsPopover>
+            <Button variant="ghost" size="icon" className="relative">
+              <Bell className="h-5 w-5" />
+              {unreadCount > 0 && (
+                <Badge
+                  variant="destructive"
+                  className="absolute -right-1 -top-1 h-5 w-5 rounded-full p-0 flex items-center justify-center text-xs"
+                >
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </Badge>
+              )}
+            </Button>
+          </NotificationsPopover>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                <Avatar className="h-8 w-8">
+                  <AvatarImage
+                    src={profile?.avatar_url || undefined}
+                    alt={profile?.full_name}
+                  />
+                  <AvatarFallback>
+                    {getInitials(profile?.full_name || 'U')}
+                  </AvatarFallback>
+                </Avatar>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-56" align="end">
+              <DropdownMenuLabel className="font-normal">
+                <div className="flex flex-col space-y-1">
+                  <p className="text-sm font-medium">{profile?.full_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {profile?.email}
+                  </p>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => navigate('/profile')}>
+                <User className="mr-2 h-4 w-4" />
+                Profile
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate('/settings')}>
+                <Settings className="mr-2 h-4 w-4" />
+                Settings
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => signOut.mutate()}>
+                <LogOut className="mr-2 h-4 w-4" />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </header>
+      <CommandMenu />
+    </>
+  );
+}
+Part 8: Task Components
+typescript
+
+
+// src/components/tasks/task-card.tsx
+import { memo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { formatDistanceToNow } from 'date-fns';
+import { motion } from 'framer-motion';
+import {
+  Calendar,
+  MessageSquare,
+  Paperclip,
+  CheckSquare,
+  AlertCircle,
+} from 'lucide-react';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Progress } from '@/components/ui/progress';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import type { TaskWithRelations } from '@/types/database';
+import { cn } from '@/lib/utils';
+interface TaskCardProps {
+  task: TaskWithRelations;
+  isDragging?: boolean;
+}
+const priorityColors = {
+  low: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+  medium: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
+  high: 'bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300',
+  critical: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
+  emergency: 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300',
+};
+const statusColors = {
+  draft: 'bg-gray-500',
+  pending: 'bg-yellow-500',
+  assigned: 'bg-blue-500',
+  in_progress: 'bg-indigo-500',
+  blocked: 'bg-red-500',
+  waiting_review: 'bg-orange-500',
+  completed: 'bg-green-500',
+  rejected: 'bg-red-600',
+  closed: 'bg-gray-600',
+  archived: 'bg-gray-400',
+};
+export const TaskCard = memo(function TaskCard({
+  task,
+  isDragging = false,
+}: TaskCardProps) {
+  const navigate = useNavigate();
+  const isOverdue =
+    task.due_date &&
+    new Date(task.due_date) < new Date() &&
+    !['completed', 'closed', 'archived'].includes(task.status);
+  const completedChecklists =
+    task.checklists?.filter((c) => c.is_completed).length || 0;
+  const totalChecklists = task.checklists?.length || 0;
+  const getInitials = (name: string) =>
+    name
+      .split(' ')
+      .map((n) => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      whileHover={{ scale: 1.02 }}
+      transition={{ duration: 0.2 }}
+    >
+      <Card
+        className={cn(
+          'cursor-pointer transition-shadow hover:shadow-md',
+          isDragging && 'shadow-lg ring-2 ring-primary'
+        )}
+        onClick={() => navigate(`/tasks/${task.id}`)}
+      >
+        <CardHeader className="pb-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div
+                className={cn('h-2 w-2 rounded-full', statusColors[task.status])}
+              />
+              <span className="text-xs text-muted-foreground">
+                #{task.task_number}
+              </span>
+            </div>
+            <Badge
+              variant="secondary"
+              className={cn('text-xs', priorityColors[task.priority])}
+            >
+              {task.priority}
+            </Badge>
+          </div>
+          <h3 className="font-semibold leading-tight line-clamp-2">
+            {task.title}
+          </h3>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {/* Labels */}
+          {task.labels && task.labels.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {task.labels.slice(0, 3).map((label) => (
+                <Badge
+                  key={label.id}
+                  variant="outline"
+                  className="text-xs"
+                  style={{
+                    borderColor: label.color,
+                    color: label.color,
+                  }}
+                >
+                  {label.name}
+                </Badge>
+              ))}
+              {task.labels.length > 3 && (
+                <Badge variant="outline" className="text-xs">
+                  +{task.labels.length - 3}
+                </Badge>
+              )}
+            </div>
+          )}
+          {/* Progress */}
+          {task.progress > 0 && (
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">Progress</span>
+                <span className="font-medium">{task.progress}%</span>
+              </div>
+              <Progress value={task.progress} className="h-1.5" />
+            </div>
+          )}
+          {/* Meta info */}
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center gap-3">
+              {task.due_date && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div
+                      className={cn(
+                        'flex items-center gap-1',
+                        isOverdue && 'text-red-500'
+                      )}
+                    >
+                      {isOverdue ? (
+                        <AlertCircle className="h-3 w-3" />
+                      ) : (
+                        <Calendar className="h-3 w-3" />
+                      )}
+                      <span>
+                        {formatDistanceToNow(new Date(task.due_date), {
+                          addSuffix: true,
+                        })}
+                      </span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Due: {new Date(task.due_date).toLocaleDateString()}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              {task.comments && task.comments.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <MessageSquare className="h-3 w-3" />
+                  <span>{task.comments.length}</span>
+                </div>
+              )}
+              {task.attachments && task.attachments.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <Paperclip className="h-3 w-3" />
+                  <span>{task.attachments.length}</span>
+                </div>
+              )}
+              {totalChecklists > 0 && (
+                <div className="flex items-center gap-1">
+                  <CheckSquare className="h-3 w-3" />
+                  <span>
+                    {completedChecklists}/{totalChecklists}
+                  </span>
+                </div>
+              )}
+            </div>
+            {task.assignee && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Avatar className="h-6 w-6">
+                    <AvatarImage
+                      src={task.assignee.avatar_url || undefined}
+                      alt={task.assignee.full_name}
+                    />
+                    <AvatarFallback className="text-xs">
+                      {getInitials(task.assignee.full_name)}
+                    </AvatarFallback>
+                  </Avatar>
+                </TooltipTrigger>
+                <TooltipContent>{task.assignee.full_name}</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+});
+typescript
+
+
+// src/components/tasks/task-table.tsx
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { formatDistanceToNow, format } from 'date-fns';
+import {
+  ColumnDef,
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  getSortedRowModel,
+  SortingState,
+  getFilteredRowModel,
+  ColumnFiltersState,
+} from '@tanstack/react-table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ArrowUpDown, MoreHorizontal, Eye, Edit, Trash2 } from 'lucide-react';
+import type { TaskWithRelations, TaskStatus, TaskPriority } from '@/types/database';
+import { cn } from '@/lib/utils';
+interface TaskTableProps {
+  tasks: TaskWithRelations[];
+  onDelete?: (taskId: string) => void;
+}
+const priorityColors: Record<TaskPriority, string> = {
+  low: 'bg-slate-100 text-slate-700',
+  medium: 'bg-blue-100 text-blue-700',
+  high: 'bg-orange-100 text-orange-700',
+  critical: 'bg-red-100 text-red-700',
+  emergency: 'bg-purple-100 text-purple-700',
+};
+const statusColors: Record<TaskStatus, string> = {
+  draft: 'bg-gray-100 text-gray-700',
+  pending: 'bg-yellow-100 text-yellow-700',
+  assigned: 'bg-blue-100 text-blue-700',
+  in_progress: 'bg-indigo-100 text-indigo-700',
+  blocked: 'bg-red-100 text-red-700',
+  waiting_review: 'bg-orange-100 text-orange-700',
+  completed: 'bg-green-100 text-green-700',
+  rejected: 'bg-red-100 text-red-700',
+  closed: 'bg-gray-100 text-gray-700',
+  archived: 'bg-gray-100 text-gray-500',
+};
+export function TaskTable({ tasks, onDelete }: TaskTableProps) {
+  const navigate = useNavigate();
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [rowSelection, setRowSelection] = useState({});
+  const getInitials = (name: string) =>
+    name
+      .split(' ')
+      .map((n) => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  const columns: ColumnDef<TaskWithRelations>[] = [
+    {
+      id: 'select',
+      header: ({ table }) => (
+        <Checkbox
+          checked={
+            table.getIsAllPageRowsSelected() ||
+            (table.getIsSomePageRowsSelected() && 'indeterminate')
+          }
+          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+          aria-label="Select all"
+        />
+      ),
+      cell: ({ row }) => (
+        <Checkbox
+          checked={row.getIsSelected()}
+          onCheckedChange={(value) => row.toggleSelected(!!value)}
+          aria-label="Select row"
+          onClick={(e) => e.stopPropagation()}
+        />
+      ),
+      enableSorting: false,
+      enableHiding: false,
+    },
+    {
+      accessorKey: 'task_number',
+      header: '#',
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">#{row.getValue('task_number')}</span>
+      ),
+    },
+    {
+      accessorKey: 'title',
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+        >
+          Title
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => (
+        <div className="max-w-[300px]">
+          <p className="font-medium truncate">{row.getValue('title')}</p>
+          {row.original.labels && row.original.labels.length > 0 && (
+            <div className="flex gap-1 mt-1">
+              {row.original.labels.slice(0, 2).map((label) => (
+                <Badge
+                  key={label.id}
+                  variant="outline"
+                  className="text-xs"
+                  style={{ borderColor: label.color, color: label.color }}
+                >
+                  {label.name}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'status',
+      header: 'Status',
+      cell: ({ row }) => {
+        const status = row.getValue('status') as TaskStatus;
+        return (
+          <Badge variant="secondary" className={cn('capitalize', statusColors[status])}>
+            {status.replace('_', ' ')}
+          </Badge>
+        );
+      },
+    },
+    {
+      accessorKey: 'priority',
+      header: 'Priority',
+      cell: ({ row }) => {
+        const priority = row.getValue('priority') as TaskPriority;
+        return (
+          <Badge variant="secondary" className={cn('capitalize', priorityColors[priority])}>
+            {priority}
+          </Badge>
+        );
+      },
+    },
+    {
+      accessorKey: 'assignee',
+      header: 'Assignee',
+      cell: ({ row }) => {
+        const assignee = row.original.assignee;
+        if (!assignee) return <span className="text-muted-foreground">Unassigned</span>;
+        return (
+          <div className="flex items-center gap-2">
+            <Avatar className="h-6 w-6">
+              <AvatarImage src={assignee.avatar_url || undefined} />
+              <AvatarFallback className="text-xs">
+                {getInitials(assignee.full_name)}
+              </AvatarFallback>
+            </Avatar>
+            <span className="text-sm">{assignee.full_name}</span>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: 'due_date',
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+        >
+          Due Date
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => {
+        const dueDate = row.getValue('due_date') as string | null;
+        if (!dueDate) return <span className="text-muted-foreground">No due date</span>;
+        const isOverdue =
+          new Date(dueDate) < new Date() &&
+          !['completed', 'closed', 'archived'].includes(row.original.status);
+        return (
+          <span className={cn(isOverdue && 'text-red-500 font-medium')}>
+            {format(new Date(dueDate), 'MMM d, yyyy')}
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: 'created_at',
+      header: 'Created',
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">
+          {formatDistanceToNow(new Date(row.getValue('created_at')), {
+            addSuffix: true,
+          })}
+        </span>
+      ),
+    },
+    {
+      id: 'actions',
+      cell: ({ row }) => (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+            <Button variant="ghost" className="h-8 w-8 p-0">
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => navigate(`/tasks/${row.original.id}`)}>
+              <Eye className="mr-2 h-4 w-4" />
+              View
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => navigate(`/tasks/${row.original.id}/edit`)}
+            >
+              <Edit className="mr-2 h-4 w-4" />
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-red-600"
+              onClick={() => onDelete?.(row.original.id)}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ),
+    },
+  ];
+  const table = useReactTable({
+    data: tasks,
+    columns,
+    onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    onRowSelectionChange: setRowSelection,
+    state: {
+      sorting,
+      columnFilters,
+      rowSelection,
+    },
+  });
+  return (
+    <div className="rounded-md border">
+      <Table>
+        <TableHeader>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <TableRow key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <TableHead key={header.id}>
+                  {header.isPlaceholder
+                    ? null
+                    : flexRender(header.column.columnDef.header, header.getContext())}
+                </TableHead>
+              ))}
+            </TableRow>
+          ))}
+        </TableHeader>
+        <TableBody>
+          {table.getRowModel().rows?.length ? (
+            table.getRowModel().rows.map((row) => (
+              <TableRow
+                key={row.id}
+                data-state={row.getIsSelected() && 'selected'}
+                className="cursor-pointer"
+                onClick={() => navigate(`/tasks/${row.original.id}`)}
+              >
+                {row.getVisibleCells().map((cell) => (
+                  <TableCell key={cell.id}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))
+          ) : (
+            <TableRow>
+              <TableCell colSpan={columns.length} className="h-24 text-center">
+                No tasks found.
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+typescript
+
+
+// src/components/tasks/kanban-board.tsx
+import { useMemo, useCallback } from 'react';
+import {
+  DndContext,
+  DragOverlay,
+  closestCorners,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragStartEvent,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { KanbanColumn } from './kanban-column';
+import { TaskCard } from './task-card';
+import type { TaskWithRelations, TaskStatus } from '@/types/database';
+import { useUpdateTaskStatus } from '@/hooks/use-tasks';
+interface KanbanBoardProps {
+  tasks: TaskWithRelations[];
+}
+const columns: { id: TaskStatus; title: string }[] = [
+  { id: 'pending', title: 'Pending' },
+  { id: 'assigned', title: 'Assigned' },
+  { id: 'in_progress', title: 'In Progress' },
+  { id: 'blocked', title: 'Blocked' },
+  { id: 'waiting_review', title: 'Waiting Review' },
+  { id: 'completed', title: 'Completed' },
+];
+export function KanbanBoard({ tasks }: KanbanBoardProps) {
+  const [activeTask, setActiveTask] = useState<TaskWithRelations | null>(null);
+  const updateStatus = useUpdateTaskStatus();
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+  const tasksByStatus = useMemo(() => {
+    const grouped: Record<TaskStatus, TaskWithRelations[]> = {} as any;
+    
+    columns.forEach((col) => {
+      grouped[col.id] = [];
+    });
+    
+    tasks.forEach((task) => {
+      if (grouped[task.status]) {
+        grouped[task.status].push(task);
+      }
+    });
+    
+    return grouped;
+  }, [tasks]);
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const { active } = event;
+      const task = tasks.find((t) => t.id === active.id);
+      setActiveTask(task || null);
+    },
+    [tasks]
+  );
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      setActiveTask(null);
+      if (!over) return;
+      const taskId = active.id as string;
+      const newStatus = over.id as TaskStatus;
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task || task.status === newStatus) return;
+      updateStatus.mutate({ taskId, status: newStatus });
+    },
+    [tasks, updateStatus]
+  );
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCorners}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
+      <ScrollArea className="w-full pb-4">
+        <div className="flex gap-4 min-w-max p-1">
+          {columns.map((column) => (
+            <KanbanColumn
+              key={column.id}
+              id={column.id}
+              title={column.title}
+              tasks={tasksByStatus[column.id] || []}
+            />
+          ))}
+        </div>
+      </ScrollArea>
+      <DragOverlay>
+        {activeTask && <TaskCard task={activeTask} isDragging />}
+      </DragOverlay>
+    </DndContext>
+  );
+}
+typescript
+
+
+// src/components/tasks/kanban-column.tsx
+import { useDroppable } from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { motion } from 'framer-motion';
+import { Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { SortableTaskCard } from './sortable-task-card';
+import type { TaskWithRelations, TaskStatus } from '@/types/database';
+import { cn } from '@/lib/utils';
+interface KanbanColumnProps {
+  id: TaskStatus;
+  title: string;
+  tasks: TaskWithRelations[];
+}
+export function KanbanColumn({ id, title, tasks }: KanbanColumnProps) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'flex flex-col w-80 bg-muted/50 rounded-lg transition-colors',
+        isOver && 'bg-muted ring-2 ring-primary/20'
+      )}
+    >
+      <div className="flex items-center justify-between p-3 border-b">
+        <div className="flex items-center gap-2">
+          <h3 className="font-semibold">{title}</h3>
+          <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+            {tasks.length}
+          </span>
+        </div>
+        <Button variant="ghost" size="icon" className="h-7 w-7">
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+      <ScrollArea className="flex-1 p-2">
+        <SortableContext
+          items={tasks.map((t) => t.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          <div className="space-y-2 min-h-[200px]">
+            {tasks.map((task) => (
+              <SortableTaskCard key={task.id} task={task} />
+            ))}
+          </div>
+        </SortableContext>
+      </ScrollArea>
+    </div>
+  );
+}
+typescript
+
+
+// src/components/tasks/sortable-task-card.tsx
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { TaskCard } from './task-card';
+import type { TaskWithRelations } from '@/types/database';
+interface SortableTaskCardProps {
+  task: TaskWithRelations;
+}
+export function SortableTaskCard({ task }: SortableTaskCardProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: task.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <TaskCard task={task} isDragging={isDragging} />
+    </div>
+  );
+}
+Part 9: Pages
+typescript
+
+
+// src/pages/dashboard.tsx
+import { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import {
+  CheckCircle2,
+  Clock,
+  AlertTriangle,
+  BarChart3,
+  TrendingUp,
+  Users,
+  Calendar,
+  ArrowRight,
+} from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useTasks } from '@/hooks/use-tasks';
+import { useTeams } from '@/hooks/use-teams';
+import { useAuthStore } from '@/store/auth.store';
+import { TaskCard } from '@/components/tasks/task-card';
+import type { DashboardStats } from '@/types/database';
+export default function DashboardPage() {
+  const navigate = useNavigate();
+  const { profile } = useAuthStore();
+  const { data: tasksData, isLoading: tasksLoading } = useTasks(
+    { is_archived: false },
+    { limit: 100 }
+  );
+  const { data: teams, isLoading: teamsLoading } = useTeams();
+  const stats = useMemo<DashboardStats | null>(() => {
+    if (!tasksData?.data) return null;
+    const tasks = tasksData.data;
+    const now = new Date();
+    const totalTasks = tasks.length;
+    const completedTasks = tasks.filter((t) =>
+      ['completed', 'closed'].includes(t.status)
+    ).length;
+    const overdueTasks = tasks.filter(
+      (t) =>
+        t.due_date &&
+        new Date(t.due_date) < now &&
+        !['completed', 'closed', 'archived'].includes(t.status)
+    ).length;
+    const pendingApprovals = tasks.filter(
+      (t) => t.status === 'waiting_review'
+    ).length;
+    const tasksByStatus = tasks.reduce(
+      (acc, task) => {
+        acc[task.status] = (acc[task.status] || 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+    const tasksByPriority = tasks.reduce(
+      (acc, task) => {
+        acc[task.priority] = (acc[task.priority] || 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+    return {
+      total_tasks: totalTasks,
+      completed_tasks: completedTasks,
+      overdue_tasks: overdueTasks,
+      pending_approvals: pendingApprovals,
+      tasks_by_status: tasksByStatus,
+      tasks_by_priority: tasksByPriority,
+      completion_rate: totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0,
+      sla_compliance: 95, // Placeholder
+    };
+  }, [tasksData]);
+  const recentTasks = useMemo(() => {
+    if (!tasksData?.data) return [];
+    return tasksData.data
+      .filter((t) => !['completed', 'closed', 'archived'].includes(t.status))
+      .slice(0, 5);
+  }, [tasksData]);
+  const myTasks = useMemo(() => {
+    if (!tasksData?.data || !profile?.id) return [];
+    return tasksData.data
+      .filter(
+        (t) =>
+          t.assignee_id === profile.id &&
+          !['completed', 'closed', 'archived'].includes(t.status)
+      )
+      .slice(0, 5);
+  }, [tasksData, profile]);
+  const StatCard = ({
+    title,
+    value,
+    icon: Icon,
+    trend,
+    color,
+  }: {
+    title: string;
+    value: number | string;
+    icon: any;
+    trend?: string;
+    color: string;
+  }) => (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">
+            {title}
+          </CardTitle>
+          <div className={`p-2 rounded-lg ${color}`}>
+            <Icon className="h-4 w-4 text-white" />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">{value}</div>
+          {trend && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+              <TrendingUp className="h-3 w-3 text-green-500" />
+              {trend}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+  if (tasksLoading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-4 w-64 mt-2" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {[...Array(4)].map((_, i) => (
+            <Skeleton key={i} className="h-32" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-3xl font-bold">
+          Welcome back, {profile?.full_name?.split(' ')[0]}
+        </h1>
+        <p className="text-muted-foreground">
+          Here's what's happening with your tasks today.
+        </p>
+      </div>
+      {/* Stats Grid */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          title="Total Tasks"
+          value={stats?.total_tasks || 0}
+          icon={BarChart3}
+          color="bg-blue-500"
+        />
+        <StatCard
+          title="Completed"
+          value={stats?.completed_tasks || 0}
+          icon={CheckCircle2}
+          trend={`${stats?.completion_rate.toFixed(0)}% completion rate`}
+          color="bg-green-500"
+        />
+        <StatCard
+          title="Overdue"
+          value={stats?.overdue_tasks || 0}
+          icon={AlertTriangle}
+          color="bg-red-500"
+        />
+        <StatCard
+          title="Pending Review"
+          value={stats?.pending_approvals || 0}
+          icon={Clock}
+          color="bg-orange-500"
+        />
+      </div>
+      {/* Progress Overview */}
+      <div className="grid gap-6 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Completion Rate</CardTitle>
+            <CardDescription>Overall task completion progress</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Progress</span>
+              <span className="text-sm font-medium">
+                {stats?.completion_rate.toFixed(0)}%
+              </span>
+            </div>
+            <Progress value={stats?.completion_rate || 0} className="h-2" />
+            <div className="grid grid-cols-2 gap-4 pt-4">
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">In Progress</p>
+                <p className="text-lg font-semibold">
+                  {stats?.tasks_by_status?.in_progress || 0}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Blocked</p>
+                <p className="text-lg font-semibold text-red-500">
+                  {stats?.tasks_by_status?.blocked || 0}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Quick Actions</CardTitle>
+            <CardDescription>Common actions you can take</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-2">
+            <Button
+              variant="outline"
+              className="justify-start"
+              onClick={() => navigate('/tasks/new')}
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Create New Task
+            </Button>
+            <Button
+              variant="outline"
+              className="justify-start"
+              onClick={() => navigate('/teams')}
+            >
+              <Users className="mr-2 h-4 w-4" />
+              Manage Teams
+            </Button>
+            <Button
+              variant="outline"
+              className="justify-start"
+              onClick={() => navigate('/calendar')}
+            >
+              <Calendar className="mr-2 h-4 w-4" />
+              View Calendar
+            </Button>
+            <Button
+              variant="outline"
+              className="justify-start"
+              onClick={() => navigate('/reports')}
+            >
+              <BarChart3 className="mr-2 h-4 w-4" />
+              View Reports
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+      {/* Tasks Sections */}
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* My Tasks */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle>My Tasks</CardTitle>
+              <CardDescription>Tasks assigned to you</CardDescription>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => navigate('/tasks?assignee=me')}>
+              View all
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {myTasks.length > 0 ? (
+              myTasks.map((task) => <TaskCard key={task.id} task={task} />)
+            ) : (
+              <p className="text-center text-muted-foreground py-8">
+                No tasks assigned to you
+              </p>
+            )}
+          </CardContent>
+        </Card>
+        {/* Recent Tasks */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle>Recent Tasks</CardTitle>
+              <CardDescription>Latest task updates</CardDescription>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => navigate('/tasks')}>
+              View all
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {recentTasks.length > 0 ? (
+              recentTasks.map((task) => <TaskCard key={task.id} task={task} />)
+            ) : (
+              <p className="text-center text-muted-foreground py-8">
+                No recent tasks
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+typescript
+
+
+// src/pages/tasks/index.tsx
+import { useState, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Plus, Table2, Kanban, Calendar as CalendarIcon, LayoutGrid } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useTasks, useDeleteTask } from '@/hooks/use-tasks';
+import { useUIStore } from '@/store/ui.store';
+import { TaskTable } from '@/components/tasks/task-table';
+import { KanbanBoard } from '@/components/tasks/kanban-board';
+import { TaskFiltersPanel } from '@/components/tasks/task-filters-panel';
+import type { TaskFilters, TaskStatus, TaskPriority } from '@/types/database';
+import { useDebounce } from '@/hooks/use-debounce';
+export default function TasksPage() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { taskView, setTaskView } = useUIStore();
+  const [search, setSearch] = useState(searchParams.get('search') || '');
+  const debouncedSearch = useDebounce(search, 300);
+  const [filters, setFilters] = useState<TaskFilters>({
+    status: searchParams.getAll('status') as TaskStatus[],
+    priority: searchParams.getAll('priority') as TaskPriority[],
+    is_archived: false,
+  });
+  const [page, setPage] = useState(1);
+  const { data, isLoading, error } = useTasks(
+    { ...filters, search: debouncedSearch },
+    { page, limit: 50 }
+  );
+  const deleteTask = useDeleteTask();
+  const handleFilterChange = (newFilters: Partial<TaskFilters>) => {
+    setFilters((prev) => ({ ...prev, ...newFilters }));
+    setPage(1);
+  };
+  const handleDelete = (taskId: string) => {
+    if (confirm('Are you sure you want to delete this task?')) {
+      deleteTask.mutate(taskId);
+    }
+  };
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Tasks</h1>
+          <p className="text-muted-foreground">
+            Manage and track all your tasks
+          </p>
+        </div>
+        <Button onClick={() => navigate('/tasks/new')}>
+          <Plus className="mr-2 h-4 w-4" />
+          New Task
+        </Button>
+      </div>
+      {/* Filters and Search */}
+      <div className="flex flex-col sm:flex-row gap-4">
+        <Input
+          placeholder="Search tasks..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="sm:max-w-xs"
+        />
+        <TaskFiltersPanel filters={filters} onChange={handleFilterChange} />
+        <div className="flex gap-2 ml-auto">
+          <Tabs value={taskView} onValueChange={(v) => setTaskView(v as any)}>
+            <TabsList>
+              <TabsTrigger value="table">
+                <Table2 className="h-4 w-4" />
+              </TabsTrigger>
+              <TabsTrigger value="kanban">
+                <Kanban className="h-4 w-4" />
+              </TabsTrigger>
+              <TabsTrigger value="calendar">
+                <CalendarIcon className="h-4 w-4" />
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+      </div>
+      {/* Task List */}
+      {isLoading ? (
+        <div className="space-y-4">
+          {[...Array(5)].map((_, i) => (
+            <Skeleton key={i} className="h-20 w-full" />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="text-center py-12">
+          <p className="text-red-500">Failed to load tasks</p>
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            Try again
+          </Button>
+        </div>
+      ) : (
+        <>
+          {taskView === 'table' && (
+            <TaskTable tasks={data?.data || []} onDelete={handleDelete} />
+          )}
+          {taskView === 'kanban' && <KanbanBoard tasks={data?.data || []} />}
+          {taskView === 'calendar' && (
+            <div className="text-center py-12 text-muted-foreground">
+              Calendar view coming soon
+            </div>
+          )}
+          {/* Pagination */}
+          {data && data.total_pages > 1 && (
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                Showing {data.data.length} of {data.total} tasks
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page === 1}
+                  onClick={() => setPage((p) => p - 1)}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page === data.total_pages}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+Part 10: Auth Pages
+typescript
+
+
+// src/pages/auth/login.tsx
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { motion } from 'framer-motion';
+import { Loader2, CheckSquare } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { useAuth } from '@/hooks/use-auth';
+const loginSchema = z.object({
+  email: z.string().email('Please enter a valid email'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+});
+type LoginFormData = z.infer<typeof loginSchema>;
+export default function LoginPage() {
+  const { signIn } = useAuth();
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<LoginFormData>({
+    resolver: zodResolver(loginSchema),
+  });
+  const onSubmit = (data: LoginFormData) => {
+    signIn.mutate(data);
+  };
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted p-4">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+      >
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-1 text-center">
+            <div className="flex justify-center mb-4">
+              <div className="h-12 w-12 rounded-xl bg-primary flex items-center justify-center">
+                <CheckSquare className="h-7 w-7 text-primary-foreground" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl font-bold">Welcome back</CardTitle>
+            <CardDescription>
+              Enter your credentials to access your account
+            </CardDescription>
+          </CardHeader>
+          <form onSubmit={handleSubmit(onSubmit)}>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="name@company.com"
+                  {...register('email')}
+                  className={errors.email ? 'border-red-500' : ''}
+                />
+                {errors.email && (
+                  <p className="text-xs text-red-500">{errors.email.message}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password">Password</Label>
+                  <Link
+                    to="/auth/forgot-password"
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Forgot password?
+                  </Link>
+                </div>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  {...register('password')}
+                  className={errors.password ? 'border-red-500' : ''}
+                />
+                {errors.password && (
+                  <p className="text-xs text-red-500">{errors.password.message}</p>
+                )}
+              </div>
+            </CardContent>
+            <CardFooter className="flex flex-col space-y-4">
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={signIn.isPending}
+              >
+                {signIn.isPending && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                Sign in
+              </Button>
+              <p className="text-sm text-muted-foreground text-center">
+                Don't have an account?{' '}
+                <Link to="/auth/register" className="text-primary hover:underline">
+                  Sign up
+                </Link>
+              </p>
+            </CardFooter>
+          </form>
+        </Card>
+      </motion.div>
+    </div>
+  );
+}
+typescript
+
+
+// src/pages/auth/register.tsx
+import { Link } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { motion } from 'framer-motion';
+import { Loader2, CheckSquare } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { useAuth } from '@/hooks/use-auth';
+const registerSchema = z
+  .object({
+    full_name: z.string().min(2, 'Name must be at least 2 characters'),
+    email: z.string().email('Please enter a valid email'),
+    password: z.string().min(8, 'Password must be at least 8 characters'),
+    confirm_password: z.string(),
+  })
+  .refine((data) => data.password === data.confirm_password, {
+    message: "Passwords don't match",
+    path: ['confirm_password'],
+  });
+type RegisterFormData = z.infer<typeof registerSchema>;
+export default function RegisterPage() {
+  const { signUp } = useAuth();
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<RegisterFormData>({
+    resolver: zodResolver(registerSchema),
+  });
+  const onSubmit = (data: RegisterFormData) => {
+    signUp.mutate({
+      email: data.email,
+      password: data.password,
+      full_name: data.full_name,
+    });
+  };
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted p-4">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+      >
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-1 text-center">
+            <div className="flex justify-center mb-4">
+              <div className="h-12 w-12 rounded-xl bg-primary flex items-center justify-center">
+                <CheckSquare className="h-7 w-7 text-primary-foreground" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl font-bold">Create an account</CardTitle>
+            <CardDescription>
+              Enter your details to get started
+            </CardDescription>
+          </CardHeader>
+          <form onSubmit={handleSubmit(onSubmit)}>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="full_name">Full Name</Label>
+                <Input
+                  id="full_name"
+                  placeholder="John Doe"
+                  {...register('full_name')}
+                  className={errors.full_name ? 'border-red-500' : ''}
+                />
+                {errors.full_name && (
+                  <p className="text-xs text-red-500">{errors.full_name.message}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="name@company.com"
+                  {...register('email')}
+                  className={errors.email ? 'border-red-500' : ''}
+                />
+                {errors.email && (
+                  <p className="text-xs text-red-500">{errors.email.message}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  {...register('password')}
+                  className={errors.password ? 'border-red-500' : ''}
+                />
+                {errors.password && (
+                  <p className="text-xs text-red-500">{errors.password.message}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirm_password">Confirm Password</Label>
+                <Input
+                  id="confirm_password"
+                  type="password"
+                  placeholder="••••••••"
+                  {...register('confirm_password')}
+                  className={errors.confirm_password ? 'border-red-500' : ''}
+                />
+                {errors.confirm_password && (
+                  <p className="text-xs text-red-500">
+                    {errors.confirm_password.message}
+                  </p>
+                )}
+              </div>
+            </CardContent>
+            <CardFooter className="flex flex-col space-y-4">
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={signUp.isPending}
+              >
+                {signUp.isPending && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                Create account
+              </Button>
+              <p className="text-sm text-muted-foreground text-center">
+                Already have an account?{' '}
+                <Link to="/auth/login" className="text-primary hover:underline">
+                  Sign in
+                </Link>
+              </p>
+            </CardFooter>
+          </form>
+        </Card>
+      </motion.div>
+    </div>
+  );
+}
+Part 11: Routing & App Setup
+typescript
+
+
+// src/routes/index.tsx
+import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
+import { AppLayout } from '@/components/layout/app-layout';
+import { AuthLayout } from '@/components/layout/auth-layout';
+import { ProtectedRoute } from '@/components/auth/protected-route';
+import { LoadingSpinner } from '@/components/common/loading-spinner';
+// Lazy load pages
+const Dashboard = lazy(() => import('@/pages/dashboard'));
+const Tasks = lazy(() => import('@/pages/tasks'));
+const TaskDetail = lazy(() => import('@/pages/tasks/[id]'));
+const TaskNew = lazy(() => import('@/pages/tasks/new'));
+const Teams = lazy(() => import('@/pages/teams'));
+const TeamDetail = lazy(() => import('@/pages/teams/[id]'));
+const Calendar = lazy(() => import('@/pages/calendar'));
+const Reports = lazy(() => import('@/pages/reports'));
+const Activity = lazy(() => import('@/pages/activity'));
+const Notifications = lazy(() => import('@/pages/notifications'));
+const Settings = lazy(() => import('@/pages/settings'));
+const Profile = lazy(() => import('@/pages/profile'));
+const Users = lazy(() => import('@/pages/users'));
+const AuditLogs = lazy(() => import('@/pages/audit-logs'));
+const Login = lazy(() => import('@/pages/auth/login'));
+const Register = lazy(() => import('@/pages/auth/register'));
+const ForgotPassword = lazy(() => import('@/pages/auth/forgot-password'));
+const ResetPassword = lazy(() => import('@/pages/auth/reset-password'));
+const Landing = lazy(() => import('@/pages/landing'));
+const Pricing = lazy(() => import('@/pages/pricing'));
+const Features = lazy(() => import('@/pages/features'));
+const PageWrapper = ({ children }: { children: React.ReactNode }) => (
+  <Suspense fallback={<LoadingSpinner />}>{children}</Suspense>
+);
+export const router = createBrowserRouter([
+  // Public routes
+  {
+    path: '/',
+    element: (
+      <PageWrapper>
+        <Landing />
+      </PageWrapper>
+    ),
+  },
+  {
+    path: '/pricing',
+    element: (
+      <PageWrapper>
+        <Pricing />
+      </PageWrapper>
+    ),
+  },
+  {
+    path: '/features',
+    element: (
+      <PageWrapper>
+        <Features />
+      </PageWrapper>
+    ),
+  },
+  // Auth routes
+  {
+    path: '/auth',
+    element: <AuthLayout />,
+    children: [
+      {
+        path: 'login',
+        element: (
+          <PageWrapper>
+            <Login />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'register',
+        element: (
+          <PageWrapper>
+            <Register />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'forgot-password',
+        element: (
+          <PageWrapper>
+            <ForgotPassword />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'reset-password',
+        element: (
+          <PageWrapper>
+            <ResetPassword />
+          </PageWrapper>
+        ),
+      },
+    ],
+  },
+  // Protected app routes
+  {
+    path: '/',
+    element: (
+      <ProtectedRoute>
+        <AppLayout />
+      </ProtectedRoute>
+    ),
+    children: [
+      {
+        path: 'dashboard',
+        element: (
+          <PageWrapper>
+            <Dashboard />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'tasks',
+        element: (
+          <PageWrapper>
+            <Tasks />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'tasks/new',
+        element: (
+          <PageWrapper>
+            <TaskNew />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'tasks/:id',
+        element: (
+          <PageWrapper>
+            <TaskDetail />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'teams',
+        element: (
+          <PageWrapper>
+            <Teams />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'teams/:id',
+        element: (
+          <PageWrapper>
+            <TeamDetail />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'calendar',
+        element: (
+          <PageWrapper>
+            <Calendar />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'reports',
+        element: (
+          <PageWrapper>
+            <Reports />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'activity',
+        element: (
+          <PageWrapper>
+            <Activity />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'notifications',
+        element: (
+          <PageWrapper>
+            <Notifications />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'settings',
+        element: (
+          <PageWrapper>
+            <Settings />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'profile',
+        element: (
+          <PageWrapper>
+            <Profile />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'users',
+        element: (
+          <PageWrapper>
+            <Users />
+          </PageWrapper>
+        ),
+      },
+      {
+        path: 'audit-logs',
+        element: (
+          <PageWrapper>
+            <AuditLogs />
+          </PageWrapper>
+        ),
+      },
+    ],
+  },
+  // Catch all
+  {
+    path: '*',
+    element: <Navigate to="/dashboard" replace />,
+  },
+]);
+typescript
+
+
+// src/App.tsx
+import { RouterProvider } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import { Toaster } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { ThemeProvider } from '@/components/theme-provider';
+import { router } from '@/routes';
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5, // 5 minutes
+      gcTime: 1000 * 60 * 30, // 30 minutes
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider defaultTheme="system" storageKey="workflow-theme">
+        <TooltipProvider>
+          <RouterProvider router={router} />
+          <Toaster position="top-right" richColors />
+        </TooltipProvider>
+      </ThemeProvider>
+      <ReactQueryDevtools initialIsOpen={false} />
+    </QueryClientProvider>
+  );
+}
+export default App;
+typescript
+
+
+// src/main.tsx
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './styles/globals.css';
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+Part 12: Supabase Edge Functions (Email)
+typescript
+
+
+// supabase/functions/send-email/index.ts
+import { serve } from '[deno.land](https://deno.land/std@0.168.0/http/server.ts)';
+import { createClient } from '[esm.sh](https://esm.sh/@supabase/supabase-js@2)';
+const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+interface EmailPayload {
+  to: string;
+  toName?: string;
+  subject: string;
+  html: string;
+  text?: string;
+  templateId?: string;
+  userId?: string;
+}
+serve(async (req) => {
+  try {
+    const payload: EmailPayload = await req.json();
+    const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+    // Send email via Resend
+    const response = await fetch('[api.resend.com](https://api.resend.com/emails)', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+      },
+      body: JSON.stringify({
+        from: 'WorkFlow <noreply@yourapp.com>',
+        to: [payload.to],
+        subject: payload.subject,
+        html: payload.html,
+        text: payload.text,
+      }),
+    });
+    const result = await response.json();
+    // Log the email
+    await supabase.from('email_logs').insert({
+      user_id: payload.userId,
+      to_email: payload.to,
+      subject: payload.subject,
+      status: response.ok ? 'sent' : 'failed',
+      provider: 'resend',
+      provider_message_id: result.id,
+      metadata: { response: result },
+    });
+    if (!response.ok) {
+      throw new Error(result.message || 'Failed to send email');
+    }
+    return new Response(JSON.stringify({ success: true, id: result.id }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ success: false, error: error.message }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+});
+typescript
+
+
+// supabase/functions/task-notifications/index.ts
+import { serve } from '[deno.land](https://deno.land/std@0.168.0/http/server.ts)';
+import { createClient } from '[esm.sh](https://esm.sh/@supabase/supabase-js@2)';
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+interface WebhookPayload {
+  type: 'INSERT' | 'UPDATE' | 'DELETE';
+  table: string;
+  record: any;
+  old_record?: any;
+}
+serve(async (req) => {
+  try {
+    const payload: WebhookPayload = await req.json();
+    const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+    if (payload.table === 'tasks') {
+      const task = payload.record;
+      // Task assigned notification
+      if (
+        payload.type === 'UPDATE' &&
+        task.assignee_id !== payload.old_record?.assignee_id &&
+        task.assignee_id
+      ) {
+        // Get assignee details
+        const { data: assignee } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', task.assignee_id)
+          .single();
+        // Get creator details
+        const { data: creator } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', task.created_by)
+          .single();
+        // Create notification
+        await supabase.from('notifications').insert({
+          user_id: task.assignee_id,
+          type: 'task_assigned',
+          title: 'New Task Assigned',
+          message: `${creator?.full_name || 'Someone'} assigned you to "${task.title}"`,
+          task_id: task.id,
+          actor_id: task.created_by,
+        });
+        // Check notification preferences and send email
+        const { data: prefs } = await supabase
+          .from('notification_preferences')
+          .select('*')
+          .eq('user_id', task.assignee_id)
+          .single();
+        if (prefs?.email_task_assigned && assignee?.email) {
+          await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+            body: JSON.stringify({
+              to: assignee.email,
+              toName: assignee.full_name,
+              subject: `New Task Assigned: ${task.title}`,
+              html: generateTaskAssignedEmail(task, creator, assignee),
+              userId: task.assignee_id,
+            }),
+          });
+        }
+      }
+      // Status changed notifications
+      if (
+        payload.type === 'UPDATE' &&
+        task.status !== payload.old_record?.status
+      ) {
+        // Notify watchers
+        const { data: watchers } = await supabase
+          .from('task_watchers')
+          .select('user_id')
+          .eq('task_id', task.id);
+        for (const watcher of watchers || []) {
+          await supabase.from('notifications').insert({
+            user_id: watcher.user_id,
+            type: 'task_updated',
+            title: 'Task Status Updated',
+            message: `Task "${task.title}" status changed to ${task.status.replace('_', ' ')}`,
+            task_id: task.id,
+          });
+        }
+        // Approval requested
+        if (task.status === 'waiting_review') {
+          // Notify team manager and admins
+          if (task.team_id) {
+            const { data: team } = await supabase
+              .from('teams')
+              .select('manager_id')
+              .eq('id', task.team_id)
+              .single();
+            if (team?.manager_id) {
+              await supabase.from('notifications').insert({
+                user_id: team.manager_id,
+                type: 'approval_requested',
+                title: 'Approval Requested',
+                message: `Task "${task.title}" is waiting for your review`,
+                task_id: task.id,
+              });
+            }
+          }
+        }
+      }
+    }
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Error processing notification:', error);
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+});
+function generateTaskAssignedEmail(task: any, creator: any, assignee: any) {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New Task Assigned</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background-color: #f4f4f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+    <tr>
+      <td>
+        <div style="background: white; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+          <div style="text-align: center; margin-bottom: 24px;">
+            <div style="display: inline-block; background: #6366f1; border-radius: 12px; padding: 12px;">
+              <span style="color: white; font-size: 24px;">✓</span>
+            </div>
+          </div>
+          
+          <h1 style="font-size: 24px; font-weight: 600; text-align: center; margin: 0 0 8px;">
+            New Task Assigned
+          </h1>
+          <p style="color: #71717a; text-align: center; margin: 0 0 32px;">
+            ${creator?.full_name || 'Someone'} has assigned you a new task
+          </p>
+          <div style="background: #fafafa; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+            <h2 style="font-size: 18px; font-weight: 600; margin: 0 0 12px;">
+              ${task.title}
+            </h2>
+            ${task.description ? `<p style="color: #52525b; margin: 0 0 16px; line-height: 1.5;">${task.description.slice(0, 200)}${task.description.length > 200 ? '...' : ''}</p>` : ''}
+            
+            <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+              <div>
+                <span style="color: #71717a; font-size: 12px;">Priority</span>
+                <p style="margin: 4px 0 0; font-weight: 500; text-transform: capitalize;">${task.priority}</p>
+              </div>
+              ${task.due_date ? `
+              <div>
+                <span style="color: #71717a; font-size: 12px;">Due Date</span>
+                <p style="margin: 4px 0 0; font-weight: 500;">${new Date(task.due_date).toLocaleDateString()}</p>
+              </div>
+              ` : ''}
+            </div>
+          </div>
+          <div style="text-align: center;">
+            <a href="${Deno.env.get('APP_URL')}/tasks/${task.id}" 
+               style="display: inline-block; background: #6366f1; color: white; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 500;">
+              View Task
+            </a>
+          </div>
+        </div>
+        
+        <p style="color: #a1a1aa; font-size: 12px; text-align: center; margin-top: 24px;">
+          You received this email because you were assigned a task in WorkFlow.
+          <a href="${Deno.env.get('APP_URL')}/settings/notifications" style="color: #6366f1;">Manage preferences</a>
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `;
+}
+Part 13: Environment Variables & Configuration
+bash
+
+
+# .env.example
+# Supabase
+VITE_SUPABASE_URL=[your-project.supabase.co](https://your-project.supabase.co)
+VITE_SUPABASE_ANON_KEY=your-anon-key
+# For Edge Functions
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+RESEND_API_KEY=your-resend-api-key
+APP_URL=[yourapp.com](https://yourapp.com)
+typescript
+
+
+// vite.config.ts
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          ui: ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu'],
+          query: ['@tanstack/react-query'],
+          dnd: ['@dnd-kit/core', '@dnd-kit/sortable'],
+        },
+      },
+    },
+  },
+});
+json
+
+
+// package.json
+{
+  "name": "enterprise-workflow",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "db:types": "supabase gen types typescript --project-id your-project-id > src/types/supabase.ts"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.1.0",
+    "@dnd-kit/sortable": "^8.0.0",
+    "@hookform/resolvers": "^3.3.4",
+    "@radix-ui/react-avatar": "^1.0.4",
+    "@radix-ui/react-checkbox": "^1.0.4",
+    "@radix-ui/react-dialog": "^1.0.5",
+    "@radix-ui/react-dropdown-menu": "^2.0.6",
+    "@radix-ui/react-label": "^2.0.2",
+    "@radix-ui/react-popover": "^1.0.7",
+    "@radix-ui/react-progress": "^1.0.3",
+    "@radix-ui/react-scroll-area": "^1.0.5",
+    "@radix-ui/react-select": "^2.0.0",
+    "@radix-ui/react-separator": "^1.0.3",
+    "@radix-ui/react-slot": "^1.0.2",
+    "@radix-ui/react-tabs": "^1.0.4",
+    "@radix-ui/react-toast": "^1.1.5",
+    "@radix-ui/react-tooltip": "^1.0.7",
+    "@supabase/supabase-js": "^2.42.0",
+    "@tanstack/react-query": "^5.28.4",
+    "@tanstack/react-query-devtools": "^5.28.4",
+    "@tanstack/react-table": "^8.13.2",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.0",
+    "cmdk": "^1.0.0",
+    "date-fns": "^3.3.1",
+    "framer-motion": "^11.0.14",
+    "lucide-react": "^0.356.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-hook-form": "^7.51.0",
+    "react-router-dom": "^6.22.3",
+    "recharts": "^2.12.3",
+    "sonner": "^1.4.3",
+    "tailwind-merge": "^2.2.1",
+    "tailwindcss-animate": "^1.0.7",
+    "zod": "^3.22.4",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.25",
+    "@types/react": "^18.2.64",
+    "@types/react-dom": "^18.2.21",
+    "@typescript-eslint/eslint-plugin": "^7.1.1",
+    "@typescript-eslint/parser": "^7.1.1",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.18",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "postcss": "^8.4.35",
+    "supabase": "^1.148.6",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.4.2",
+    "vite": "^5.1.5"
+  }
+}

@@ -1,0 +1,8 @@
+# Dependencies / build
+node_modules/
+dist/
+
+# Secrets & local overrides (Vite reads `.env`; keep it untracked)
+.env
+.env.local
+.env.*.local

@@ -1,0 +1,38 @@
+
+enterprise-workflow/
+├── public/
+├── src/
+│   ├── api/
+│   ├── components/
+│   │   ├── ui/
+│   │   ├── layout/
+│   │   ├── forms/
+│   │   ├── tasks/
+│   │   ├── teams/
+│   │   ├── notifications/
+│   │   └── common/
+│   ├── features/
+│   │   ├── auth/
+│   │   ├── dashboard/
+│   │   ├── tasks/
+│   │   ├── teams/
+│   │   ├── users/
+│   │   ├── reports/
+│   │   ├── notifications/
+│   │   └── settings/
+│   ├── hooks/
+│   ├── lib/
+│   ├── pages/
+│   ├── routes/
+│   ├── services/
+│   ├── store/
+│   ├── types/
+│   ├── utils/
+│   └── integrations/
+│       └── supabase/
+├── supabase/
+│   ├── migrations/
+│   └── functions/
+├── .env.example
+├── package.json
+└── README.md
