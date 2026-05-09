@@ -25,23 +25,23 @@ export function useAuth() {
     logout: clearAuth,
   } = useAuthStore();
 
-  // Initialize auth state
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        const session = await authService.getSession();
-        setSession(session);
+  // // Initialize auth state
+  // useEffect(() => {
+  //   const initAuth = async () => {
+  //     try {
+  //       const session = await authService.getSession();
+  //       setSession(session);
 
-        if (session?.user) {
-          const profile = await authService.getProfile(session.user.id);
-          setProfile(profile);
-        }
-      } catch (error) {
-        debugError('useAuth.init', 'Auth initialization failed', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  //       if (session?.user) {
+  //         const profile = await authService.getProfile(session.user.id);
+  //         setProfile(profile);
+  //       }
+  //     } catch (error) {
+  //       debugError('useAuth.init', 'Auth initialization failed', error);
+  //     } finally {
+  //       setIsLoading(false);
+  //     }
+  //   };
 
     initAuth();
 
