@@ -14,25 +14,47 @@ export default function AuthProvider({
   const setIsLoading = useAuthStore((s) => s.setIsLoading);
 
   useEffect(() => {
+    let isMounted = true;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
     const init = async () => {
       try {
-        setIsLoading(true);
+        if (isMounted) setIsLoading(true);
+
+        // Safety timeout: if init takes more than 10 seconds, force stop loading
+        timeoutId = setTimeout(() => {
+          if (isMounted) {
+            console.error('Auth initialization timeout');
+            setIsLoading(false);
+          }
+        }, 10000);
 
         const session = await authService.getSession();
+
+        if (!isMounted) return;
 
         setSession(session);
 
         if (session?.user) {
-          const profile = await authService.getProfile(session.user.id);
-
-          setProfile(profile);
+          try {
+            const profile = await authService.getProfile(session.user.id);
+            if (isMounted) setProfile(profile);
+          } catch (err) {
+            console.error('Failed to fetch profile:', err);
+            if (isMounted) setProfile(null);
+          }
         } else {
           setProfile(null);
         }
       } catch (err) {
-        console.error(err);
+        console.error('Auth initialization error:', err);
+        if (isMounted) {
+          setSession(null);
+          setProfile(null);
+        }
       } finally {
-        setIsLoading(false);
+        clearTimeout(timeoutId);
+        if (isMounted) setIsLoading(false);
       }
     };
 
@@ -41,19 +63,29 @@ export default function AuthProvider({
     const {
       data: { subscription },
     } = authService.onAuthStateChange(async (_event, session) => {
+      if (!isMounted) return;
+      
       setSession(session);
 
       if (session?.user) {
-        const profile = await authService.getProfile(session.user.id);
-
-        setProfile(profile);
+        try {
+          const profile = await authService.getProfile(session.user.id);
+          if (isMounted) setProfile(profile);
+        } catch (err) {
+          console.error('Failed to fetch profile on auth change:', err);
+          if (isMounted) setProfile(null);
+        }
       } else {
         setProfile(null);
       }
     });
 
-    return () => subscription.unsubscribe();
-  }, []);
+    return () => {
+      clearTimeout(timeoutId);
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [setIsLoading, setSession, setProfile]);
 
   return <>{children}</>;
 }
