@@ -5,7 +5,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './styles/globals.css';
 import { debugError, debugLog, isDebug } from '@/lib/debug';
-
+import AuthProvider from '@/providers/auth-provider';
 if (isDebug()) {
   debugLog('bootstrap', 'Enterprise Workflow debug enabled (DEV, VITE_DEBUG, or window.__EW_DEBUG__)');
 
@@ -24,7 +24,9 @@ if (isDebug()) {
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
+ <React.StrictMode>
+  <AuthProvider>
     <App />
-  </React.StrictMode>
+  </AuthProvider>
+</React.StrictMode>
 );
