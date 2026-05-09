@@ -28,8 +28,6 @@ export function useAuth() {
 
     onSuccess: async (data) => {
       try {
-        console.log('[v0] Login successful, session:', !!data.session);
-        
         // Set session first - this updates both session and user in store
         setSession(data.session);
 
@@ -39,10 +37,9 @@ export function useAuth() {
             const profile = await authService.getProfile(
               data.session.user.id
             );
-            console.log('[v0] Profile fetched:', !!profile);
             setProfile(profile);
           } catch (profileError) {
-            console.error('[v0] Failed to fetch profile:', profileError);
+            console.error('Failed to fetch profile:', profileError);
             // Continue even if profile fetch fails
             setProfile(null);
           }
@@ -52,7 +49,6 @@ export function useAuth() {
         
         // Give store a moment to sync before navigation
         setTimeout(() => {
-          console.log('[v0] Navigating to dashboard');
           navigate('/dashboard');
         }, 100);
       } catch (error) {
@@ -63,7 +59,6 @@ export function useAuth() {
 
     onError: (error: Error) => {
       debugError('useAuth.signIn', 'mutation error', error);
-      console.error('[v0] Login error:', error.message);
       toast.error(error.message);
     },
   });

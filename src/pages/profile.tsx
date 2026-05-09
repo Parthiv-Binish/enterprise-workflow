@@ -1,4 +1,5 @@
 import { useForm } from 'react-hook-form';
+import { useEffect } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Loader2 } from 'lucide-react';
@@ -57,16 +58,27 @@ export default function ProfilePage() {
 
   const form = useForm<ProfileForm>({
     resolver: zodResolver(profileSchema),
-    values: profile
-      ? {
-          full_name: profile.full_name,
-          job_title: profile.job_title ?? '',
-          phone: profile.phone ?? '',
-          timezone: profile.timezone || 'UTC',
-          avatar_url: profile.avatar_url ?? '',
-        }
-      : undefined,
+    defaultValues: {
+      full_name: '',
+      job_title: '',
+      phone: '',
+      timezone: 'UTC',
+      avatar_url: '',
+    },
   });
+
+  // Reset form when profile loads
+  useEffect(() => {
+    if (profile) {
+      form.reset({
+        full_name: profile.full_name,
+        job_title: profile.job_title ?? '',
+        phone: profile.phone ?? '',
+        timezone: profile.timezone || 'UTC',
+        avatar_url: profile.avatar_url ?? '',
+      });
+    }
+  }, [profile, form]);
 
   const onSubmit = (data: ProfileForm) => {
     updateProfile.mutate({

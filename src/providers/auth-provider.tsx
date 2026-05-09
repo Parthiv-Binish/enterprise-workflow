@@ -15,7 +15,6 @@ export default function AuthProvider({
 
   useEffect(() => {
     let isMounted = true;
-    let initDone = false;
 
     const init = async () => {
       try {
@@ -49,7 +48,6 @@ export default function AuthProvider({
       } finally {
         if (isMounted) {
           setIsLoading(false);
-          initDone = true;
         }
       }
     };
@@ -61,8 +59,6 @@ export default function AuthProvider({
       data: { subscription },
     } = authService.onAuthStateChange(async (_event, session) => {
       if (!isMounted) return;
-      
-      console.log('[v0] Auth state changed:', _event);
       
       setSession(session);
 
