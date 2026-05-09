@@ -28,27 +28,39 @@ export const useAuthStore = create<AuthState>()(
       isLoading: false,
       isAuthenticated: false,
 
-      setUser: (user) =>
-        set({ user, isAuthenticated: !!user }),
+      setUser: (user) => {
+        console.log('[v0] setUser:', !!user);
+        set({ user, isAuthenticated: !!user });
+      },
 
-      setProfile: (profile) => set({ profile }),
+      setProfile: (profile) => {
+        console.log('[v0] setProfile:', !!profile);
+        set({ profile });
+      },
 
-      setSession: (session) =>
+      setSession: (session) => {
+        console.log('[v0] setSession:', !!session, session?.user?.email);
         set({
           session,
           user: session?.user || null,
           isAuthenticated: !!session,
-        }),
+        });
+      },
 
-      setIsLoading: (isLoading) => set({ isLoading }),
+      setIsLoading: (isLoading) => {
+        console.log('[v0] setIsLoading:', isLoading);
+        set({ isLoading });
+      },
 
-      logout: () =>
+      logout: () => {
+        console.log('[v0] logout');
         set({
           user: null,
           profile: null,
           session: null,
           isAuthenticated: false,
-        }),
+        });
+      },
     }),
     {
       name: 'auth-storage',

@@ -28,29 +28,42 @@ export function useAuth() {
 
     onSuccess: async (data) => {
       try {
+        console.log('[v0] Login successful, session:', !!data.session);
+        
+        // Set session first - this updates both session and user in store
         setSession(data.session);
 
+        // Then fetch and set profile
         if (data.session?.user) {
-          const profile = await authService.getProfile(
-            data.session.user.id
-          );
-
-          setProfile(profile);
+          try {
+            const profile = await authService.getProfile(
+              data.session.user.id
+            );
+            console.log('[v0] Profile fetched:', !!profile);
+            setProfile(profile);
+          } catch (profileError) {
+            console.error('[v0] Failed to fetch profile:', profileError);
+            // Continue even if profile fetch fails
+            setProfile(null);
+          }
         }
 
         toast.success('Welcome back!');
-
-        navigate('/dashboard');
+        
+        // Give store a moment to sync before navigation
+        setTimeout(() => {
+          console.log('[v0] Navigating to dashboard');
+          navigate('/dashboard');
+        }, 100);
       } catch (error) {
         debugError('useAuth.signIn', 'post-login setup failed', error);
-
         toast.error('Login succeeded but profile setup failed.');
       }
     },
 
     onError: (error: Error) => {
       debugError('useAuth.signIn', 'mutation error', error);
-
+      console.error('[v0] Login error:', error.message);
       toast.error(error.message);
     },
   });

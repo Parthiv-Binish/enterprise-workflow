@@ -15,19 +15,11 @@ export default function AuthProvider({
 
   useEffect(() => {
     let isMounted = true;
-    let timeoutId: ReturnType<typeof setTimeout>;
+    let initDone = false;
 
     const init = async () => {
       try {
-        if (isMounted) setIsLoading(true);
-
-        // Safety timeout: if init takes more than 10 seconds, force stop loading
-        timeoutId = setTimeout(() => {
-          if (isMounted) {
-            console.error('Auth initialization timeout');
-            setIsLoading(false);
-          }
-        }, 10000);
+        setIsLoading(true);
 
         const session = await authService.getSession();
 
@@ -38,32 +30,39 @@ export default function AuthProvider({
         if (session?.user) {
           try {
             const profile = await authService.getProfile(session.user.id);
-            if (isMounted) setProfile(profile);
+            if (isMounted) {
+              setProfile(profile);
+            }
           } catch (err) {
-            console.error('Failed to fetch profile:', err);
+            console.error('[v0] Failed to fetch profile:', err);
             if (isMounted) setProfile(null);
           }
         } else {
-          setProfile(null);
+          if (isMounted) setProfile(null);
         }
       } catch (err) {
-        console.error('Auth initialization error:', err);
+        console.error('[v0] Auth initialization error:', err);
         if (isMounted) {
           setSession(null);
           setProfile(null);
         }
       } finally {
-        clearTimeout(timeoutId);
-        if (isMounted) setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+          initDone = true;
+        }
       }
     };
 
+    // Start auth initialization
     init();
 
     const {
       data: { subscription },
     } = authService.onAuthStateChange(async (_event, session) => {
       if (!isMounted) return;
+      
+      console.log('[v0] Auth state changed:', _event);
       
       setSession(session);
 
@@ -72,16 +71,15 @@ export default function AuthProvider({
           const profile = await authService.getProfile(session.user.id);
           if (isMounted) setProfile(profile);
         } catch (err) {
-          console.error('Failed to fetch profile on auth change:', err);
+          console.error('[v0] Failed to fetch profile on auth change:', err);
           if (isMounted) setProfile(null);
         }
       } else {
-        setProfile(null);
+        if (isMounted) setProfile(null);
       }
     });
 
     return () => {
-      clearTimeout(timeoutId);
       isMounted = false;
       subscription.unsubscribe();
     };
