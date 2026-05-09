@@ -218,7 +218,6 @@ export function useToggleChecklist() {
     mutationFn: ({
       checklistId,
       isCompleted,
-      taskId,
     }: {
       checklistId: string;
       isCompleted: boolean;

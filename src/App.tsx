@@ -14,6 +14,9 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { router } from '@/routes';
 import { debugError, isDebug } from '@/lib/debug';
 
+// Only render DevTools in debug mode
+const showDevTools = isDebug();
+
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error, query) => {
@@ -52,7 +55,7 @@ function App() {
           <Toaster position="top-right" richColors />
         </TooltipProvider>
       </ThemeProvider>
-      <ReactQueryDevtools initialIsOpen={false} />
+      {showDevTools && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>
   );
 }

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  // Resolve `.env` from this file’s folder (robust under `"type": "module"` + Windows).
+  // Resolve `.env` from this file's folder (robust under `"type": "module"` + Windows).
   envDir: rootDir,
   plugins: [react()],
   resolve: {
@@ -17,6 +17,15 @@ export default defineConfig({
     },
   },
   build: {
+    // Production optimizations
+    minify: 'terser',
+    sourcemap: false,
+    target: 'ES2022',
+    outDir: 'dist',
+    assetsDir: 'assets',
+    reportCompressedSize: true,
+    // Warnings for chunks over 500kb
+    chunkSizeWarningLimit: 500,
     rollupOptions: {
       output: {
         manualChunks: {

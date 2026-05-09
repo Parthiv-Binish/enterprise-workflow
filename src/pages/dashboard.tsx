@@ -32,7 +32,8 @@ export default function DashboardPage() {
     { limit: 100 }
   );
 
-  const { data: teams, isLoading: teamsLoading } = useTeams();
+  // Teams data unused in this view but kept for future enhancements
+  useTeams();
 
   const stats = useMemo<DashboardStats | null>(() => {
     if (!tasksData?.data) return null;

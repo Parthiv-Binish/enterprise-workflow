@@ -133,7 +133,7 @@ serve(async (req) => {
   }
 });
 
-function generateTaskAssignedEmail(task: any, creator: any, assignee: any) {
+function generateTaskAssignedEmail(task: any, creator: any, _assignee: any) {
   return `
 <!DOCTYPE html>
 <html>

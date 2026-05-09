@@ -8,6 +8,7 @@ import type { Profile } from '@/types/database';
 import { useAuthStore } from '@/store/auth.store';
 import { debugError } from '@/lib/debug';
 import { toast } from 'sonner';
+import type { Session } from '@supabase/supabase-js';
 
 export function useAuth() {
   const navigate = useNavigate();
@@ -18,7 +19,6 @@ export function useAuth() {
     session,
     isLoading,
     isAuthenticated,
-    setUser,
     setProfile,
     setSession,
     setIsLoading,
@@ -48,7 +48,7 @@ export function useAuth() {
     // Listen for auth changes
     const {
       data: { subscription },
-    } = authService.onAuthStateChange(async (event, session) => {
+    } = authService.onAuthStateChange(async (event: string, session: Session | null) => {
       setSession(session);
 
       if (session?.user) {
@@ -77,7 +77,7 @@ export function useAuth() {
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [navigate, queryClient, setIsLoading, setProfile, setSession]);
 
   const signIn = useMutation({
     mutationFn: authService.signIn,

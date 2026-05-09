@@ -1,6 +1,6 @@
 // src/components/tasks/kanban-board.tsx
 
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useState } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -12,13 +12,7 @@ import {
   DragStartEvent,
   DragEndEvent,
 } from '@dnd-kit/core';
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { KanbanColumn } from './kanban-column';
 import { TaskCard } from './task-card';

@@ -3,15 +3,18 @@
 import { createClient } from '@supabase/supabase-js';
 import { debugError, isDebug } from '@/lib/debug';
 
-/** Project URL — replace when pointing at another Supabase project. */
-const SUPABASE_URL = 'https://yoztfkxjyqoctrauuwow.supabase.co';
-
 /**
- * Public anon key (browser-safe). RLS still applies.
- * Never put the service_role key in frontend code.
+ * Supabase configuration from environment variables
+ * VITE_ prefix makes these available in the browser (safe to expose anon key with RLS)
  */
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlvenRma3hqeXFvY3RyYXV1d293Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgyNzgyMzEsImV4cCI6MjA5Mzg1NDIzMX0.TNbkzSjcbDcTynrVj-d5e9Xh9XRhVAaEmX7RvvLd1ZE';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error(
+    'Missing Supabase environment variables. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file.'
+  );
+}
 
 /**
  * `fetchWithAuth` skips setting `apikey` when an empty header exists.

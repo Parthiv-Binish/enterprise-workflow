@@ -3,6 +3,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { throwIfSupabaseError } from '@/lib/debug';
 import type { Profile, UserRole } from '@/types/database';
+import type { Session } from '@supabase/supabase-js';
 
 export interface SignUpData {
   email: string;
@@ -110,7 +111,9 @@ export const authService = {
     return data;
   },
 
-  onAuthStateChange(callback: (event: string, session: unknown) => void) {
-    return supabase.auth.onAuthStateChange(callback);
+  onAuthStateChange(callback: (event: string, session: Session | null) => Promise<void> | void) {
+    return supabase.auth.onAuthStateChange((event, session) => {
+      return callback(event, session);
+    });
   },
 };
