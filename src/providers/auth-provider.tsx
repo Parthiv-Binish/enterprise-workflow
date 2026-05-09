@@ -31,6 +31,7 @@ export default function AuthProvider({
         }
       } catch (err) {
         console.error(err);
+        setIsLoading(false);
       } finally {
         setIsLoading(false);
       }
@@ -53,7 +54,7 @@ export default function AuthProvider({
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [setIsLoading, setSession, setProfile]);
 
   return <>{children}</>;
 }

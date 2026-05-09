@@ -5,6 +5,7 @@ import './styles/globals.css';
 import { debugError, debugLog, isDebug } from '@/lib/debug';
 import AuthProvider from '@/providers/auth-provider';
 import { useAuthStore } from '@/store/auth.store';
+import { Loader2 } from 'lucide-react';
 
 function Root() {
   const [hydrated, setHydrated] = React.useState(false);
@@ -22,7 +23,12 @@ function Root() {
   }, []);
 
   if (!hydrated) {
-    return null;
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-background">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" aria-hidden />
+        <span className="sr-only">Loading</span>
+      </div>
+    );
   }
 
   return (
