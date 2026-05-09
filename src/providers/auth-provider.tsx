@@ -11,11 +11,24 @@ export default function AuthProvider({
   const setIsLoading = useAuthStore((s) => s.setIsLoading);
 
   useEffect(() => {
+    console.log('AUTH PROVIDER STARTED');
+
     const init = async () => {
       try {
+        console.log('GETTING SESSION...');
+
         const session = await authService.getSession();
+
+        console.log('SESSION RESULT:', session);
+
         setSession(session);
+
+        console.log('SESSION SAVED TO STORE');
+      } catch (err) {
+        console.error('SESSION INIT ERROR:', err);
       } finally {
+        console.log('LOADING FALSE');
+
         setIsLoading(false);
       }
     };
@@ -24,11 +37,18 @@ export default function AuthProvider({
 
     const {
       data: { subscription },
-    } = authService.onAuthStateChange((_event, session) => {
+    } = authService.onAuthStateChange((event, session) => {
+      console.log('AUTH STATE CHANGED:', event);
+      console.log('NEW SESSION:', session);
+
       setSession(session);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      console.log('AUTH SUBSCRIPTION CLEANED');
+
+      subscription.unsubscribe();
+    };
   }, [setSession, setIsLoading]);
 
   return <>{children}</>;
