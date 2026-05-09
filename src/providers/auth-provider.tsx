@@ -8,48 +8,28 @@ export default function AuthProvider({
   children: React.ReactNode;
 }) {
   const setSession = useAuthStore((s) => s.setSession);
-  const setIsLoading = useAuthStore((s) => s.setIsLoading);
 
   useEffect(() => {
-    console.log('AUTH PROVIDER STARTED');
-
     const init = async () => {
-      try {
-        console.log('GETTING SESSION...');
+      const session = await authService.getSession();
 
-        const session = await authService.getSession();
+      console.log('RESTORED SESSION:', session);
 
-        console.log('SESSION RESULT:', session);
-
-        setSession(session);
-
-        console.log('SESSION SAVED TO STORE');
-      } catch (err) {
-        console.error('SESSION INIT ERROR:', err);
-      } finally {
-        console.log('LOADING FALSE');
-
-        setIsLoading(false);
-      }
+      setSession(session);
     };
 
     init();
 
     const {
       data: { subscription },
-    } = authService.onAuthStateChange((event, session) => {
-      console.log('AUTH STATE CHANGED:', event);
-      console.log('NEW SESSION:', session);
+    } = authService.onAuthStateChange((_event, session) => {
+      console.log('AUTH CHANGED:', session);
 
       setSession(session);
     });
 
-    return () => {
-      console.log('AUTH SUBSCRIPTION CLEANED');
-
-      subscription.unsubscribe();
-    };
-  }, [setSession, setIsLoading]);
+    return () => subscription.unsubscribe();
+  }, [setSession]);
 
   return <>{children}</>;
 }
