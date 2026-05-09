@@ -19,26 +19,49 @@ export function useAuth() {
     isLoading,
     isAuthenticated,
     setProfile,
+    setSession,
     logout: clearAuth,
   } = useAuthStore();
 
   const signIn = useMutation({
     mutationFn: authService.signIn,
-    onSuccess: () => {
-      toast.success('Welcome back!');
-      navigate('/dashboard');
+
+    onSuccess: async (data) => {
+      try {
+        setSession(data.session);
+
+        if (data.session?.user) {
+          const profile = await authService.getProfile(
+            data.session.user.id
+          );
+
+          setProfile(profile);
+        }
+
+        toast.success('Welcome back!');
+
+        navigate('/dashboard');
+      } catch (error) {
+        debugError('useAuth.signIn', 'post-login setup failed', error);
+
+        toast.error('Login succeeded but profile setup failed.');
+      }
     },
+
     onError: (error: Error) => {
       debugError('useAuth.signIn', 'mutation error', error);
+
       toast.error(error.message);
     },
   });
 
   const signUp = useMutation({
     mutationFn: authService.signUp,
+
     onSuccess: () => {
       toast.success('Account created! Please check your email to verify.');
     },
+
     onError: (error: Error) => {
       debugError('useAuth.signUp', 'mutation error', error);
 
@@ -51,6 +74,7 @@ export function useAuth() {
         toast.error(
           'Signup failed on the database (usually a missing/broken profiles trigger).'
         );
+
         return;
       }
 
@@ -60,14 +84,17 @@ export function useAuth() {
 
   const signOut = useMutation({
     mutationFn: authService.signOut,
+
     onSuccess: () => {
       clearAuth();
+
       queryClient.clear();
 
       toast.success('Signed out successfully');
 
       navigate('/auth/login');
     },
+
     onError: (error: Error) => {
       debugError('useAuth.signOut', 'mutation error', error);
 
@@ -77,9 +104,11 @@ export function useAuth() {
 
   const resetPassword = useMutation({
     mutationFn: authService.resetPassword,
+
     onSuccess: () => {
       toast.success('Password reset email sent');
     },
+
     onError: (error: Error) => {
       debugError('useAuth.resetPassword', 'mutation error', error);
 
@@ -89,11 +118,13 @@ export function useAuth() {
 
   const updatePassword = useMutation({
     mutationFn: authService.updatePassword,
+
     onSuccess: () => {
       toast.success('Password updated successfully');
 
       navigate('/dashboard');
     },
+
     onError: (error: Error) => {
       debugError('useAuth.updatePassword', 'mutation error', error);
 
