@@ -1,7 +1,7 @@
 // supabase/functions/send-email/index.ts
 
-import { serve } from '[deno.land](https://deno.land/std@0.168.0/http/server.ts)';
-import { createClient } from '[esm.sh](https://esm.sh/@supabase/supabase-js@2)';
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
@@ -24,7 +24,7 @@ serve(async (req) => {
     const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
 
     // Send email via Resend
-    const response = await fetch('[api.resend.com](https://api.resend.com/emails)', {
+    const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

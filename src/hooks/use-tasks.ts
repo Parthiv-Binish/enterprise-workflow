@@ -2,12 +2,14 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tasksService } from '@/services/tasks.service';
+import { storageService } from '@/services/storage.service';
 import type {
   TaskFilters,
   PaginationParams,
   CreateTaskInput,
   UpdateTaskInput,
   TaskStatus,
+  TaskAttachment,
 } from '@/types/database';
 import { toast } from 'sonner';
 
@@ -251,5 +253,29 @@ export function useUnwatchTask() {
       queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
       toast.success('Stopped watching this task');
     },
+  });
+}
+
+export function useUploadTaskAttachment(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => storageService.uploadTaskAttachment(taskId, file),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+      toast.success('File uploaded');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useDeleteTaskAttachment(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (attachment: TaskAttachment) => storageService.deleteAttachment(attachment),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+      toast.success('Attachment deleted');
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 }

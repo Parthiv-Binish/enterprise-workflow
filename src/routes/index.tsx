@@ -21,6 +21,7 @@ const Settings = lazy(() => import('@/pages/settings'));
 const Profile = lazy(() => import('@/pages/profile'));
 const Users = lazy(() => import('@/pages/users'));
 const AuditLogs = lazy(() => import('@/pages/audit-logs'));
+const Departments = lazy(() => import('@/pages/departments'));
 
 const Login = lazy(() => import('@/pages/auth/login'));
 const Register = lazy(() => import('@/pages/auth/register'));
@@ -219,6 +220,14 @@ export const router = createBrowserRouter([
             element: (
               <PageWrapper>
                 <AuditLogs />
+              </PageWrapper>
+            ),
+          },
+          {
+            path: 'departments',
+            element: (
+              <PageWrapper>
+                <Departments />
               </PageWrapper>
             ),
           },

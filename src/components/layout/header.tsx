@@ -26,7 +26,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/use-auth';
 import { useUIStore } from '@/store/ui.store';
-import { useNotificationsStore } from '@/store/notifications.store';
+import { useUnreadNotificationCount } from '@/hooks/use-notifications';
 import { NotificationsPopover } from '@/components/notifications/notifications-popover';
 import { CommandMenu } from '@/components/common/command-menu';
 
@@ -34,7 +34,8 @@ export function Header() {
   const navigate = useNavigate();
   const { profile, signOut } = useAuth();
   const { theme, setTheme, setCommandMenuOpen } = useUIStore();
-  const { unreadCount } = useNotificationsStore();
+  const unread = useUnreadNotificationCount();
+  const unreadCount = unread.data ?? 0;
   const [searchQuery, setSearchQuery] = useState('');
 
   const handleSearch = (e: React.FormEvent) => {

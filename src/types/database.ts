@@ -377,8 +377,9 @@ export interface CreateTaskInput {
   description?: string;
   status?: TaskStatus;
   priority?: TaskPriority;
-  assignee_id?: string;
-  team_id?: string;
+  /** Nullable so updates can explicitly clear assignment/team. */
+  assignee_id?: string | null;
+  team_id?: string | null;
   due_date?: string;
   start_date?: string;
   estimated_hours?: number;

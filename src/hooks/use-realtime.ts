@@ -5,15 +5,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { debugError } from '@/lib/debug';
 import { useAuthStore } from '@/store/auth.store';
-import { useNotificationsStore } from '@/store/notifications.store';
 import { taskKeys } from './use-tasks';
 import { teamKeys } from './use-teams';
+import { notificationKeys } from './use-notifications';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 export function useRealtime() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
-  const { addNotification } = useNotificationsStore();
   const channelRef = useRef<RealtimeChannel | null>(null);
 
   useEffect(() => {
@@ -69,9 +68,9 @@ export function useRealtime() {
         filter: `user_id=eq.${user.id}`,
       },
       (payload) => {
-        if (payload.new) {
-          addNotification(payload.new as any);
-        }
+        if (!payload.new) return;
+        // Keep UI consistent: refresh list + unread badge
+        queryClient.invalidateQueries({ queryKey: notificationKeys.all });
       }
     );
 
@@ -117,7 +116,7 @@ export function useRealtime() {
     return () => {
       channel.unsubscribe();
     };
-  }, [user?.id, queryClient, addNotification]);
+  }, [user?.id, queryClient]);
 
   return channelRef.current;
 }

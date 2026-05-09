@@ -5,9 +5,11 @@ import { Sidebar } from './sidebar';
 import { Header } from './header';
 import { useUIStore } from '@/store/ui.store';
 import { cn } from '@/lib/utils';
+import { useRealtime } from '@/hooks/use-realtime';
 
 export function AppLayout() {
   const { sidebarCollapsed } = useUIStore();
+  useRealtime();
 
   return (
     <div className="min-h-screen bg-background">
