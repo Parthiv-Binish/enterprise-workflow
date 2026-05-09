@@ -10,6 +10,13 @@ export function ProtectedRoute({
 
   const session = useAuthStore((s) => s.session);
 
+  // wait for zustand persist hydration
+  const hasHydrated = useAuthStore.persist?.hasHydrated?.();
+
+  if (!hasHydrated) {
+    return null;
+  }
+
   if (!session) {
     return (
       <Navigate
