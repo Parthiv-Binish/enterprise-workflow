@@ -7,15 +7,7 @@ export function ProtectedRoute({
   children: React.ReactNode;
 }) {
   const location = useLocation();
-
   const session = useAuthStore((s) => s.session);
-
-  // wait for zustand persist hydration
-  const hasHydrated = useAuthStore.persist?.hasHydrated?.();
-
-  if (!hasHydrated) {
-    return null;
-  }
 
   if (!session) {
     return (
