@@ -1,3 +1,5 @@
+// src/providers/auth-provider.tsx
+
 import { useEffect } from 'react';
 import { authService } from '@/services/auth.service';
 import { useAuthStore } from '@/store/auth.store';
@@ -27,6 +29,8 @@ export default function AuthProvider({
         } else {
           setProfile(null);
         }
+      } catch (err) {
+        console.error(err);
       } finally {
         setIsLoading(false);
       }
