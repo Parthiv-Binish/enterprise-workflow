@@ -79,7 +79,7 @@ export default function TaskDetailPage() {
   const uploadAttachment = useUploadTaskAttachment(taskId);
   const deleteAttachment = useDeleteTaskAttachment(taskId);
 
-  const team = useTeam(task.team_id ?? '');
+  const team = useTeam(task?.team_id ?? '');
   const teamMemberOptions = useMemo(() => {
     const members = team.data?.members ?? [];
     const users = members.map((m: any) => m.user).filter(Boolean);
